@@ -2208,12 +2208,17 @@ class Controller {
                     this.synthesizers[entry.trackNum].cutInstrument(entry.synthInstrIndex);
                 }
 
-                // Stop instruments that have exceeded their duration
-                if (entry.stopFlag || (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard)) {
+                if (entry.stopFlag) {
                     if (entry.adsrState !== AdsrState.Release) {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
                         entry.adsrTimer = -92544;
+                    }
+                }
+                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard) {
+                    if (entry.adsrState !== AdsrState.Release) {
+                        this.notesOn[entry.trackNum][entry.midiNote] = 0;
+                        entry.adsrState = AdsrState.Release;
                     }
                 }
 
@@ -2430,9 +2435,9 @@ class Controller {
                                 channel.endTime = this.sequence.ticksElapsed + duration;
                                 //lastNote.adsrState = AdsrState.Attack;
                                 //lastNote.adsrTimer = -92544; // idk why this number, ask gbatek
-                                channel.lfoCounter = 0;
-                                channel.lfoDelayCounter = 0;
-                                channel.delayCounter = 0;
+                                // channel.lfoCounter = 0;
+                                // channel.lfoDelayCounter = 0;
+                                // channel.delayCounter = 0;
                             }
                             else {
                                 let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
