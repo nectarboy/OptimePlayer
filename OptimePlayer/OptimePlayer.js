@@ -1233,12 +1233,13 @@ class SequenceTrack {
         this.id = id;
 
         this.active = false;
+        this.activeChannels = [];
 
         this.bpm = 0;
 
         this.pc = 0;
         this.pan = 64;
-        this.mono = false;
+        this.mono = true; // Testing suggests this defaults to true contrary to what some sources state ..?
         this.volume = 0;
         this.priority = 0;
         this.program = 0;
@@ -1255,7 +1256,10 @@ class SequenceTrack {
 
         this.expression = 0;
 
+        this.tie = 0;
+
         this.portamentoEnable = 0;
+        this.portamentoKey = 0;
         this.portamentoTime = 0;
 
         this.restingFor = 0;
@@ -1349,6 +1353,10 @@ class SequenceTrack {
             this.debugLog("Velocity: " + velocity);
             this.debugLog("Duration: " + duration);
 
+            if (this.mono) {
+                this.restingFor = duration;
+            }
+
             this.sendMessage(false, MessageType.PlayNote, opcode, velocity, duration);
         } else {
             switch (opcode) {
@@ -1376,10 +1384,37 @@ class SequenceTrack {
 
                     break;
                 }
+                case 0xA0: // Random
+                {
+                    var subopcode = this.readPcInc();
+                    var min = this.readPcInc(2);
+                    var max = this.readPcInc(2);
+                    // Sign extend to s16
+                    min = min << 16 >> 16;
+                    max = max << 16 >> 16;
+
+                    var rand = Math.round(Math.random() * (max - min) + min);
+
+                    break;
+                } 
                 case 0xC7: // Mono / Poly
                 {
                     let param = this.readPcInc();
                     this.mono = bitTest(param, 0);
+                    break;
+                }
+                case 0xC8: // Tie On / Off
+                {
+                    this.tie = this.readPcInc();
+                    this.debugLog("Tie On / Off: " + this.tie);
+                    // TODO: implement tie
+                    break;
+                }
+                case 0xC9: // Portamento Control
+                {
+                    this.portamentoKey = this.readPcInc();
+                    this.portamentoEnable = true;
+                    this.debugLog("Portamento Key: " + this.portamentoKey);
                     break;
                 }
                 case 0xCE: // Portamento On / Off
@@ -1487,9 +1522,10 @@ class SequenceTrack {
                 }
                 case 0x94: // Jump
                 {
+                    var from = this.pc;
                     let dest = this.readPcInc(3);
                     this.pc = dest;
-                    this.debugLogForce(`Jump to: ${hexN(dest, 6)} Tick: ${this.sequence.ticksElapsed}`);
+                    this.debugLogForce(`Jump from ${hexN(from, 6)} to: ${hexN(dest, 6)} Tick: ${this.sequence.ticksElapsed}`);
 
                     this.sendMessage(false, MessageType.Jump);
                     break;
@@ -1978,7 +2014,7 @@ class Controller {
     constructor(sampleRate, sdat, sseqId) {
         let sseqInfo = sdat.sseqInfos[sseqId];
         if (!sseqInfo) throw new Error();
-        if (!sseqInfo.bank) throw new Error();
+        if (sseqInfo.bank === null) throw new Error();
         this.bankInfo = sdat.sbnkInfos[sseqInfo.bank];
         if (!this.bankInfo) throw new Error();
         this.instrumentBank = sdat.instrumentBanks[sseqInfo.bank];
@@ -2143,7 +2179,7 @@ class Controller {
                 }
 
                 if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard) {
-                    if (entry.adsrState !== AdsrState.Release) {
+                    if (entry.adsrState !== AdsrState.Release && !this.sequence.tracks[entry.trackNum].tie) {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
                     }
@@ -2262,6 +2298,10 @@ class Controller {
         }
 
         if (indexToDelete !== -1) {
+            var note = this.activeNoteData[indexToDelete];
+            var indexToDeleteInTrackChannel = this.sequence.tracks[note.trackNum].activeChannels.indexOf(note);
+            if (indexToDeleteInTrackChannel !== -1)
+                this.sequence.tracks[note.trackNum].activeChannels.splice(indexToDeleteInTrackChannel, 1);
             this.activeNoteData.splice(indexToDelete, 1);
         }
 
@@ -2328,12 +2368,27 @@ class Controller {
                                 console.log("Release Coefficient: " + instrument.releaseCoefficient[index]);
                             }
 
-                            let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
-                            let synthInstrIndex = this.synthesizers[msg.trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
+                            if (this.sequence.tracks[msg.trackNum].tie && this.sequence.tracks[msg.trackNum].activeChannels.length > 0) {
+                                var lastNote = this.sequence.tracks[msg.trackNum].activeChannels[this.sequence.tracks[msg.trackNum].activeChannels.length - 1];
+                                console.log(lastNote);
+                                lastNote.midiNote = midiNote;
+                                lastNote.velocity = velocity;
+                                lastNote.endTime = this.sequence.ticksElapsed + duration;
+                                lastNote.adsrState = AdsrState.Attack;
+                                lastNote.adsrTimer = -92544; // idk why this number, ask gbatek
+                                lastNote.lfoCounter = 0;
+                                lastNote.lfoDelayCounter = 0;
+                                lastNote.delayCounter = 0;
 
-                            this.notesOn[msg.trackNum][midiNote] = 1;
-                            this.activeNoteData.push(
-                                {
+                                var instr = this.synthesizers[msg.trackNum].instrs[lastNote.synthInstrIndex];
+                                instr.setNote(midiNote);
+                            }
+                            else {
+                                let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
+                                let synthInstrIndex = this.synthesizers[msg.trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
+
+                                this.notesOn[msg.trackNum][midiNote] = 1;
+                                var note = {
                                     trackNum: msg.trackNum,
                                     midiNote: midiNote,
                                     velocity: velocity,
@@ -2348,8 +2403,10 @@ class Controller {
                                     lfoCounter: 0,
                                     lfoDelayCounter: 0,
                                     delayCounter: 0,
-                                }
-                            );
+                                };
+                                this.activeNoteData.push(note);
+                                this.sequence.tracks[msg.trackNum].activeChannels.push(note);
+                            }
                         }
                         break;
                     case MessageType.Jump: {
