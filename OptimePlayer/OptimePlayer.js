@@ -1196,6 +1196,12 @@ class Sequence {
                         this.tracks[i].execute();
                     }
                     this.tracks[i].restingFor--;
+
+                    for (let index in this.tracks[i].activeChannels) {
+                        var channel = this.tracks[i].activeChannels[index];
+                        if (!channel.autoSweep && channel.sweepCounter)
+                            channel.sweepCounter--;
+                    }
                 }
             }
         }
@@ -1251,6 +1257,8 @@ class SequenceTrack {
         this.lfoSpeed = 16;
         this.lfoDelay = 0;
 
+        this.transpose = 0;
+
         this.pitchBend = 0;
         this.pitchBendRange = 0;
 
@@ -1261,6 +1269,8 @@ class SequenceTrack {
         this.portamentoEnable = 0;
         this.portamentoKey = 0;
         this.portamentoTime = 0;
+
+        this.sweepPitch = 0;
 
         this.restingFor = 0;
 
@@ -1277,7 +1287,7 @@ class SequenceTrack {
      * @param {string} _msg
      */
     debugLog(_msg) {
-        // console.log(`${this.id}: ${msg}`)
+        console.log(`${this.id}: ${_msg}`);
     }
 
     /**
@@ -1346,10 +1356,11 @@ class SequenceTrack {
         let opcode = this.readPcInc();
 
         if (opcode <= 0x7F) {
+            let note = opcode + this.transpose;
             let velocity = this.readPcInc();
             let duration = this.readVariableLength();
 
-            this.debugLog("Note: " + opcode);
+            this.debugLog("Note: " + note);
             this.debugLog("Velocity: " + velocity);
             this.debugLog("Duration: " + duration);
 
@@ -1357,7 +1368,7 @@ class SequenceTrack {
                 this.restingFor = duration;
             }
 
-            this.sendMessage(false, MessageType.PlayNote, opcode, velocity, duration);
+            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration);
         } else {
             switch (opcode) {
                 case 0xFE: // Allocate track
@@ -1407,14 +1418,21 @@ class SequenceTrack {
                 {
                     this.tie = this.readPcInc();
                     this.debugLog("Tie On / Off: " + this.tie);
-                    // TODO: implement tie
+
+                    // Apparently when tie is turned off, all currently playing channels immediately stop
+                    this.lastActiveChannel = null;
+                    for (let i in this.activeChannels) {
+                        var channel = this.activeChannels[i];
+                        channel.stopFlag = true;
+                    }
+
                     break;
                 }
                 case 0xC9: // Portamento Control
                 {
-                    this.portamentoKey = this.readPcInc();
-                    this.portamentoEnable = true;
-                    this.debugLog("Portamento Key: " + this.portamentoKey);
+                    this.portamentoKey = (this.readPcInc() + this.transpose) & 0xff;
+                    this.portamentoEnable = 1;
+                    this.debugLog("Portamento Control: " + this.portamentoKey);
                     break;
                 }
                 case 0xCE: // Portamento On / Off
@@ -1507,6 +1525,12 @@ class SequenceTrack {
                     this.debugLog("LFO Range: " + this.lfoRange);
                     break;
                 }
+                case 0xC3: // Transpose
+                {
+                    this.transpose = this.readPcInc() << 24 >> 24;
+                    this.debugLog("Transpose: " + this.transpose);
+                    break;
+                }
                 case 0xC4: // Pitch Bend
                 {
                     this.pitchBend = this.readPcInc();
@@ -1553,6 +1577,12 @@ class SequenceTrack {
                 {
                     this.lfoDelay = this.readPcInc(2);
                     this.debugLog("LFO Delay: " + this.lfoDelay);
+                    break;
+                }
+                case 0xE3: // Sweep Pitch
+                {
+                    this.sweepPitch = this.readPcInc(2) << 16 >> 16;
+                    this.debugLog("Sweep Pitch: " + this.sweepPitch);
                     break;
                 }
                 case 0xD5: // Expression
@@ -2178,10 +2208,12 @@ class Controller {
                     this.synthesizers[entry.trackNum].cutInstrument(entry.synthInstrIndex);
                 }
 
-                if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard) {
-                    if (entry.adsrState !== AdsrState.Release && !this.sequence.tracks[entry.trackNum].tie) {
+                // Stop instruments that have exceeded their duration
+                if (entry.stopFlag || (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard)) {
+                    if (entry.adsrState !== AdsrState.Release) {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
+                        entry.adsrTimer = -92544;
                     }
                 }
 
@@ -2228,6 +2260,17 @@ class Controller {
                     lfoValue >>= 14n;
                 }
 
+                var finetune;
+                if (entry.sweepPitch && entry.sweepCounter) {
+                    finetune = entry.sweepPitch * (entry.sweepCounter / entry.sweepLength);
+                    if (entry.autoSweep)
+                        entry.sweepCounter--;
+                    console.log(finetune);
+                }
+                else {
+                    finetune = 0;
+                }
+
                 if (entry.delayCounter < track.lfoDelay) {
                     entry.delayCounter++;
                 } else {
@@ -2245,13 +2288,17 @@ class Controller {
                         switch (track.lfoType) {
                             case LfoType.Pitch:
                                 // LFO value is in 1/64ths of a semitone
-                                instr.setFinetuneLfo(Number(lfoValue) / 64);
+                                finetune += Number(lfoValue);
+                                //instr.setFinetuneLfo(Number(lfoValue) / 64);
                                 break;
                             default:
                                 break;
                         }
                     }
+
                 }
+
+                instr.setFinetuneLfo((finetune) / 64);
 
                 // all thanks to @ipatix at pret/pokediamond
                 switch (entry.adsrState) {
@@ -2300,8 +2347,11 @@ class Controller {
         if (indexToDelete !== -1) {
             var note = this.activeNoteData[indexToDelete];
             var indexToDeleteInTrackChannel = this.sequence.tracks[note.trackNum].activeChannels.indexOf(note);
-            if (indexToDeleteInTrackChannel !== -1)
+            if (indexToDeleteInTrackChannel !== -1) {
                 this.sequence.tracks[note.trackNum].activeChannels.splice(indexToDeleteInTrackChannel, 1);
+                if (this.sequence.tracks[note.trackNum].lastActiveChannel === note)
+                    this.sequence.tracks[note.trackNum].lastActiveChannel = null;
+            }
             this.activeNoteData.splice(indexToDelete, 1);
         }
 
@@ -2329,7 +2379,8 @@ class Controller {
                             // refers to the archive ID referred to by the corresponding SBNK entry in the INFO block
 
                             /** @type {InstrumentRecord} */
-                            let instrument = this.instrumentBank.instruments[this.sequence.tracks[msg.trackNum].program];
+                            let track = this.sequence.tracks[msg.trackNum];
+                            let instrument = this.instrumentBank.instruments[track.program];
 
                             let index = instrument.resolveEntryIndex(midiNote);
                             let archiveIndex = instrument.swarInfoId[index];
@@ -2368,27 +2419,28 @@ class Controller {
                                 console.log("Release Coefficient: " + instrument.releaseCoefficient[index]);
                             }
 
-                            if (this.sequence.tracks[msg.trackNum].tie && this.sequence.tracks[msg.trackNum].activeChannels.length > 0) {
-                                var lastNote = this.sequence.tracks[msg.trackNum].activeChannels[this.sequence.tracks[msg.trackNum].activeChannels.length - 1];
-                                console.log(lastNote);
-                                lastNote.midiNote = midiNote;
-                                lastNote.velocity = velocity;
-                                lastNote.endTime = this.sequence.ticksElapsed + duration;
-                                lastNote.adsrState = AdsrState.Attack;
-                                lastNote.adsrTimer = -92544; // idk why this number, ask gbatek
-                                lastNote.lfoCounter = 0;
-                                lastNote.lfoDelayCounter = 0;
-                                lastNote.delayCounter = 0;
-
-                                var instr = this.synthesizers[msg.trackNum].instrs[lastNote.synthInstrIndex];
+                            var channel = null;
+                            if (track.tie && track.lastActiveChannel) {
+                                channel = track.lastActiveChannel; //track.activeChannels[track.activeChannels.length - 1];
+                                var instr = this.synthesizers[msg.trackNum].instrs[channel.synthInstrIndex];
                                 instr.setNote(midiNote);
+
+                                channel.midiNote = midiNote;
+                                channel.velocity = velocity;
+                                channel.endTime = this.sequence.ticksElapsed + duration;
+                                //lastNote.adsrState = AdsrState.Attack;
+                                //lastNote.adsrTimer = -92544; // idk why this number, ask gbatek
+                                channel.lfoCounter = 0;
+                                channel.lfoDelayCounter = 0;
+                                channel.delayCounter = 0;
                             }
                             else {
                                 let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
                                 let synthInstrIndex = this.synthesizers[msg.trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
 
                                 this.notesOn[msg.trackNum][midiNote] = 1;
-                                var note = {
+                                channel = {
+                                    stopFlag: false,
                                     trackNum: msg.trackNum,
                                     midiNote: midiNote,
                                     velocity: velocity,
@@ -2402,11 +2454,30 @@ class Controller {
                                     fromKeyboard: msg.fromKeyboard,
                                     lfoCounter: 0,
                                     lfoDelayCounter: 0,
-                                    delayCounter: 0,
+                                    delayCounter: 0
                                 };
-                                this.activeNoteData.push(note);
-                                this.sequence.tracks[msg.trackNum].activeChannels.push(note);
+                                this.activeNoteData.push(channel);
+                                track.activeChannels.push(channel);
+                                track.lastActiveChannel = channel;
                             }
+
+                            var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((track.portamentoKey - midiNote) << 6);
+                            track.portamentoKey = midiNote;
+                            var sweepLength;
+                            var autoSweep;
+                            if (this.portamentoTime) {
+                                sweepLength = (track.portamentoTime * track.portamentoTime * Math.abs(track.sweepPitch)) >> 11;
+                                autoSweep = true;
+                            }
+                            else {
+                                sweepLength = duration;
+                                autoSweep = false;
+                            }
+
+                            channel.sweepPitch = sweepPitch;
+                            channel.sweepCounter = sweepLength;
+                            channel.sweepLength = sweepLength;
+                            channel.autoSweep = autoSweep;
                         }
                         break;
                     case MessageType.Jump: {
@@ -2436,7 +2507,7 @@ class Controller {
                     }
                     case MessageType.PitchBend: {
                         let track = this.sequence.tracks[msg.trackNum];
-                        let pitchBend = track.pitchBend << 25 >> 25; // sign extend
+                        let pitchBend = track.pitchBend << 24 >> 24; // sign extend
                         pitchBend *= track.pitchBendRange / 2;
                         // pitch bend specified in 1/64 of a semitone
                         this.synthesizers[msg.trackNum].setFinetune(pitchBend / 64);
