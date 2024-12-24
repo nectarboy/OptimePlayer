@@ -953,7 +953,7 @@ const MessageType = {
     TrackEnded: 3,
     VolumeChange: 4, // P0: Volume
     PanChange: 5, // P0: Pan (0-127)
-    PitchBend: 6,
+    PitchBend: 6
 };
 
 class Sample {
@@ -1175,8 +1175,12 @@ class Sequence {
         this.messageBuffer = messageBuffer;
 
         /** @type {SequenceTrack[]} */
+        this.vars = new Int16Array(32);
         this.tracks = new Array(16);
 
+        for (let i = 0; i < 32; i++) {
+            this.vars[i] = !(i & 7) * 0xffff; // Source: Kermalis
+        }
         for (let i = 0; i < 16; i++) {
             this.tracks[i] = new SequenceTrack(this, i);
         }
@@ -1192,22 +1196,36 @@ class Sequence {
         if (!this.paused) {
             for (let i = 0; i < 16; i++) {
                 if (this.tracks[i].active) {
-                    while (this.tracks[i].restingFor === 0) {
-                        this.tracks[i].execute();
-                    }
-                    this.tracks[i].restingFor--;
-
                     for (let index in this.tracks[i].activeChannels) {
                         var channel = this.tracks[i].activeChannels[index];
                         if (!channel.autoSweep && channel.sweepCounter)
                             channel.sweepCounter--;
                     }
+                    while (this.tracks[i].restingFor === 0) {
+                        this.tracks[i].execute();
+                    }
+                    this.tracks[i].restingFor--;
                 }
             }
         }
 
         this.ticksElapsed++;
     }
+
+    /**
+     * @param {number} id
+     */
+    readVar(id) {
+        return this.vars[id & 0x1f]; // TODO: What happens when we read OOB ?
+    }
+    /**
+     * @param {number} id
+     * @param {number} val
+     */
+    writeVar(id, val) {
+        this.vars[id & 0x1f] = val;
+    }
+
 
     /**
      * @param {number} num
@@ -1228,6 +1246,12 @@ class Sequence {
     }
 }
 
+const ParamOverride = {
+    Null: 0,
+    Random: 1,
+    Variable: 2
+};
+
 class SequenceTrack {
     /**
      * @param {Sequence} sequence
@@ -1237,6 +1261,7 @@ class SequenceTrack {
         /** @type {Sequence} */
         this.sequence = sequence;
         this.id = id;
+        this.paramOverride = ParamOverride.Null;
 
         this.active = false;
         this.activeChannels = [];
@@ -1245,8 +1270,8 @@ class SequenceTrack {
 
         this.pc = 0;
         this.pan = 64;
-        this.mono = true; // Testing suggests this defaults to true contrary to what some sources state ..?
-        this.volume = 0;
+        this.mono = true;
+        this.volume = 0x7f; // TODO: does the synthesizer need to be updated accordingly ?
         this.priority = 0;
         this.program = 0;
         this.bank = 0;
@@ -1260,14 +1285,14 @@ class SequenceTrack {
         this.transpose = 0;
 
         this.pitchBend = 0;
-        this.pitchBendRange = 0;
+        this.pitchBendRange = 2;
 
         this.expression = 0;
 
         this.tie = 0;
 
         this.portamentoEnable = 0;
-        this.portamentoKey = 0;
+        this.portamentoKey = 60;
         this.portamentoTime = 0;
 
         this.sweepPitch = 0;
@@ -1275,19 +1300,22 @@ class SequenceTrack {
         this.restingFor = 0;
 
         this.stack = new Uint32Array(64);
+        this.loopStack = new Uint32Array(64);
+        this.loopStackCount = new Uint8Array(this.loopStack.length);
         this.sp = 0;
+        this.loopSp = 0;
 
-        this.attackRate = 0;
-        this.decayRate = 0;
-        this.sustainRate = 0;
-        this.releaseRate = 0;
+        this.attackRate = 0xff;
+        this.decayRate = 0xff;
+        this.sustainRate = 0xff;
+        this.releaseRate = 0xff;
     }
 
     /**
      * @param {string} _msg
      */
-    debugLog(_msg) {
-        console.log(`${this.id}: ${_msg}`);
+    debugLog(msg) {
+        //console.log(`${this.id}: ${msg}`);
     }
 
     /**
@@ -1308,6 +1336,23 @@ class SequenceTrack {
     pop() {
         if (this.sp === 0) alert("SSEQ stack underflow");
         return this.stack[--this.sp];
+    }
+
+    pushLoop(val, count) {
+        this.loopStack[this.loopSp] = val;
+        this.loopStackCount[this.loopSp++] = count;
+        if (this.loopSp >= this.loopStack.length) alert("SSEQ loop stack overflow");
+    }
+
+    popLoop() {
+        if (this.loopSp === 0) alert("SSEQ loop stack underflow");
+        var i = this.loopSp - 1;
+        var val = this.loopStack[i];
+        if (this.loopStackCount[i]) {
+            this.loopStackCount[i]--;
+            this.loopSp -= this.loopStackCount[i] === 0;
+        }
+        return val;
     }
 
     readPc() {
@@ -1340,6 +1385,34 @@ class SequenceTrack {
         return num;
     }
 
+    readRandom() {
+        this.paramOverride = ParamOverride.Null;
+        var min = this.readPcInc(2) << 16 >> 16;
+        var max = this.readPcInc(2) << 16 >> 16;
+        return Math.round(Math.random() * (max - min) + min);
+    }
+    readVariable() {
+        this.paramOverride = ParamOverride.Null;
+        return this.sequence.readVar(this.readPcInc());
+    }
+
+    readLastPcInc(bytes = 1) {
+        if (!this.paramOverride)
+            return this.readPcInc(bytes);
+        else if (this.paramOverride === ParamOverride.Random)
+            return this.readRandom();
+        else if (this.paramOverride === ParamOverride.Variable)
+            return this.readVariable();
+    }
+    readLastVariableLength() {
+        if (!this.paramOverride)
+            return this.readVariableLength();
+        else if (this.paramOverride === ParamOverride.Random)
+            return this.readRandom();
+        else if (this.paramOverride === ParamOverride.Variable)
+            return this.readVariable();
+    }
+
     /**
      * @param {boolean} fromKeyboard
      * @param {number} type
@@ -1351,14 +1424,18 @@ class SequenceTrack {
         this.sequence.messageBuffer.insert(new Message(fromKeyboard, this.id, type, param0, param1, param2));
     }
 
-    execute() {
-        let opcodePc = this.pc;
-        let opcode = this.readPcInc();
+    executeOpcode(opcode) {
+        //c1 cb
 
         if (opcode <= 0x7F) {
             let note = opcode + this.transpose;
+            if (note < 0)
+                note = 0;
+            else if (note > 0x7f)
+                note = 0x7f;
+
             let velocity = this.readPcInc();
-            let duration = this.readVariableLength();
+            let duration = this.isSubOpcode ? this.subParam : this.readVariableLength();
 
             this.debugLog("Note: " + note);
             this.debugLog("Velocity: " + velocity);
@@ -1397,17 +1474,16 @@ class SequenceTrack {
                 }
                 case 0xA0: // Random
                 {
-                    var subopcode = this.readPcInc();
-                    var min = this.readPcInc(2);
-                    var max = this.readPcInc(2);
-                    // Sign extend to s16
-                    min = min << 16 >> 16;
-                    max = max << 16 >> 16;
-
-                    var rand = Math.round(Math.random() * (max - min) + min);
-
+                    this.debugLog('RANDOM, opcode is ' + hexN(this.readPc(),2));
+                    this.paramOverride = ParamOverride.Random;
                     break;
-                } 
+                }
+                case 0xA1: // Variable
+                {
+                    this.debugLog('VARIABLE, opcode is ' + hexN(this.readPc(),2));
+                    this.paramOverride = ParamOverride.Variable;
+                    break;
+                }
                 case 0xC7: // Mono / Poly
                 {
                     let param = this.readPcInc();
@@ -1430,7 +1506,12 @@ class SequenceTrack {
                 }
                 case 0xC9: // Portamento Control
                 {
-                    this.portamentoKey = (this.readPcInc() + this.transpose) & 0xff;
+                    this.portamentoKey = (this.readPcInc() + this.transpose);
+                    if (this.portamentoKey < 0)
+                        this.portamentoKey = 0;
+                    else if (this.portamentoKey > 0x7f)
+                        this.portamentoKey = 0x7f;
+
                     this.portamentoEnable = 1;
                     this.debugLog("Portamento Control: " + this.portamentoKey);
                     break;
@@ -1455,9 +1536,9 @@ class SequenceTrack {
                 }
                 case 0xC1: // Volume
                 {
-                    this.volume = this.readPcInc();
+                    this.volume = this.readLastPcInc() & 0xff;
                     this.sendMessage(false, MessageType.VolumeChange, this.volume);
-                    this.debugLog("Volume: " + this.volume);
+                    //this.debugLogForce("Volume: " + this.volume);
                     break;
                 }
                 case 0x81: // Set bank and program
@@ -1475,6 +1556,7 @@ class SequenceTrack {
                 {
                     this.masterVolume = this.readPcInc();
                     this.debugLogForce("Master Volume: " + this.masterVolume);
+                    console.warn('UNIMPLEMENTED MASTER VOLUME');
                     break;
                 }
                 case 0xC0: // Pan
@@ -1506,7 +1588,7 @@ class SequenceTrack {
                 }
                 case 0xCB: // LFO Speed
                 {
-                    this.lfoSpeed = this.readPcInc();
+                    this.lfoSpeed = this.readLastPcInc() & 0xff;
                     this.debugLog("LFO Speed: " + this.lfoSpeed);
                     break;
                 }
@@ -1533,7 +1615,7 @@ class SequenceTrack {
                 }
                 case 0xC4: // Pitch Bend
                 {
-                    this.pitchBend = this.readPcInc();
+                    this.pitchBend = this.readLastPcInc();
                     this.debugLog("Pitch Bend: " + this.pitchBend);
                     this.sendMessage(false, MessageType.PitchBend);
                     break;
@@ -1568,9 +1650,22 @@ class SequenceTrack {
                     this.pc = this.pop();
                     break;
                 }
-                case 0xB0: // TODO: According to sseq2mid: arithmetic operations?
+                case 0xB0: // Set Variable
                 {
-                    this.readPcInc(3);
+                    var index = this.readPcInc();
+                    this.sequence.writeVar(index, this.readPcInc(2) << 16 >> 16);
+                    break;
+                }
+                case 0xB1: // Add Variable
+                {
+                    var index = this.readPcInc();
+                    this.sequence.writeVar(index, this.sequence.readVar(index) + (this.readPcInc(2) << 16 >> 16));
+                    break;
+                }
+                case 0xB2: // Subtract Variable
+                {
+                    var index = this.readPcInc();
+                    this.sequence.writeVar(index, this.sequence.readVar(index) - (this.readPcInc(2) << 16 >> 16));
                     break;
                 }
                 case 0xE0: // LFO Delay
@@ -1585,10 +1680,25 @@ class SequenceTrack {
                     this.debugLog("Sweep Pitch: " + this.sweepPitch);
                     break;
                 }
+                case 0xD4: // Loop Start
+                {
+                    //this.debugLogForce('Loop Start ' + this.pc);
+                    var count = this.readPcInc();
+                    this.pushLoop(this.pc, count);
+                    break;
+                }
                 case 0xD5: // Expression
                 {
                     this.expression = this.readPcInc();
                     this.debugLog("Expression: " + this.expression);
+                    break;
+                }
+                case 0xFC: // Loop End
+                {
+                    if (this.loopSp > 0) {
+                        this.pc = this.popLoop();
+                        //this.debugLogForce('Loop End, back to ' + this.pc);
+                    }
                     break;
                 }
                 case 0xFF: // End of Track
@@ -1597,6 +1707,7 @@ class SequenceTrack {
                     this.sendMessage(false, MessageType.TrackEnded);
                     // Set restingFor to non-zero since the controller checks it to stop executing
                     this.restingFor = 1;
+                    this.debugLogForce("Track hit a FIN, id " + this.id);
                     break;
                 }
                 case 0xD0: // Attack Rate
@@ -1624,9 +1735,18 @@ class SequenceTrack {
                     break;
                 }
                 default:
-                    console.error(`${this.id}: Unknown opcode: ` + hex(opcode, 2) + " PC: " + hex(opcodePc, 6));
+                    console.error(`${this.id}: Unknown opcode: ` + hex(opcode, 2) + " PC: " + hex(this.pc - 1, 6));
             }
         }
+    }
+
+    execute() {
+        this.isSubOpcode = false;
+
+        let opcodePc = this.pc;
+        let opcode = this.readPcInc();
+
+        this.executeOpcode(opcode);
     }
 }
 
@@ -2227,7 +2347,7 @@ class Controller {
                 let lfoValue;
                 if (track.lfoDepth === 0) {
                     lfoValue = BigInt(0);
-                } else if (entry.lfoDelayCounter < track.lfoDelay) {
+                } else if (entry.lfoDelayCounter++ < track.lfoDelay) {
                     lfoValue = BigInt(0);
                 } else {
                     /**
@@ -2250,6 +2370,7 @@ class Controller {
                     lfoValue = BigInt(SND_SinIdx(entry.lfoCounter >>> 8) * track.lfoDepth * track.lfoRange);
                 }
 
+                // OPTIMIZE
                 if (lfoValue !== 0n) {
                     switch (track.lfoType) {
                         case LfoType.Volume:
@@ -2270,7 +2391,6 @@ class Controller {
                     finetune = entry.sweepPitch * (entry.sweepCounter / entry.sweepLength);
                     if (entry.autoSweep)
                         entry.sweepCounter--;
-                    console.log(finetune);
                 }
                 else {
                     finetune = 0;
