@@ -503,6 +503,9 @@ class Sdat {
         this.sseqInfos = [];
         this.sseqNameIdDict = new Map();
         this.sseqIdNameDict = new Map();
+        this.ssarNameIdDict = new Map();
+        this.ssarIdNameDict = new Map();
+        this.ssarSseqSymbols = [];
         this.sbnkNameIdDict = new Map();
         this.sbnkIdNameDict = new Map();
 
@@ -599,6 +602,22 @@ class Sdat {
         let fileView = createRelativeDataView(view, fileOffs, fileSize);
 
         // SYMB processing
+        function readCString(view, start) {
+            let str = '';
+            let offs = 0;
+
+            // Read C string from symbol
+            let char;
+            do {
+                char = read8(view, start + offs++);
+                if (char !== 0) {
+                    str += String.fromCharCode(char);
+                }
+            } while (char !== 0);
+
+            return str;
+        }
+
         {
             // SSEQ symbols
             let symbSseqListOffs = read32LE(symbView, 0x8);
@@ -614,22 +633,9 @@ class Sdat {
             for (let i = 0; i < symbSseqListNumEntries; i++) {
                 let sseqNameOffs = read32LE(symbView, symbSseqListOffs + 4 + i * 4);
 
-                let sseqNameArr = [];
-                let sseqNameCharOffs = 0;
-
-                // Read C string from symbol
-                let char;
-                do {
-                    char = read8(symbView, sseqNameOffs + sseqNameCharOffs);
-                    sseqNameCharOffs++;
-                    if (char !== 0) {
-                        sseqNameArr.push(char);
-                    }
-                } while (char !== 0);
-
                 // for some reason games have a ton of empty symbols -- skip them
                 if (sseqNameOffs !== 0) {
-                    let seqName = String.fromCharCode(...sseqNameArr);
+                    let seqName = readCString(symbView, sseqNameOffs);
 
                     sdat.sseqNameIdDict.set(seqName, i);
                     sdat.sseqIdNameDict.set(i, seqName);
@@ -643,6 +649,45 @@ class Sdat {
             let symbSsarListNumEntries = read32LE(symbView, symbSsarListOffs);
 
             console.log("SYMB Number of SSAR entries: " + symbSsarListNumEntries);
+
+            sdat.ssarSseqSymbols.length = 0;
+            for (let i = 0; i < symbSsarListNumEntries; i++) {
+                let ssarNameOffs = read32LE(symbView, symbSsarListOffs + i * 8 + 4);
+
+                // for some reason games have a ton of empty symbols -- skip them
+                if (ssarNameOffs !== 0) {
+                    let ssarName = readCString(symbView, ssarNameOffs);
+
+                    sdat.ssarNameIdDict.set(ssarName, i);
+                    sdat.ssarIdNameDict.set(i, ssarName);
+                }
+
+                // Sub-SSEQ symbols for this SSAR
+                let symbSsarSseqListOffs = read32LE(symbView, symbSsarListOffs + i*8 + 8);
+                let symbSsarSseqListNumEntries = read32LE(symbView, symbSsarSseqListOffs);
+                if (symbSsarSseqListNumEntries) {
+                    sdat.ssarSseqSymbols[i] = {
+                        ssarSseqNameIdDict: new Map(),
+                        ssarSseqIdNameDict: new Map()
+                    };
+                }
+                else {
+                    sdat.ssarSseqSymbols[i] = null;
+                }
+                //console.log("SYMB Number of Sub-SSEQ entries for SSAR_" + i + ": " + symbSsarSseqListNumEntries);
+
+                for (let ii = 0; ii < symbSsarSseqListNumEntries; ii++) {
+                    let ssarSseqNameOffs = read32LE(symbView, symbSsarSseqListOffs + 4 + ii*4);
+
+                    // for some reason games have a ton of empty symbols -- skip them
+                    if (ssarSseqNameOffs !== 0) {
+                        let ssarSeqName = readCString(symbView, ssarSseqNameOffs);
+
+                        sdat.ssarSseqSymbols[i].ssarSseqNameIdDict.set(ssarSeqName, ii);
+                        sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.set(ii, ssarSeqName);
+                    }
+                }
+            }
         }
 
         {
@@ -654,24 +699,12 @@ class Sdat {
             console.log("SYMB Number of BANK entries: " + symbBankListNumEntries);
 
             for (let i = 0; i < symbBankListNumEntries; i++) {
-                let symbNameOffs = read32LE(symbView, symbBankListOffs + 4 + i * 4);
-                if (i === 0) console.log("NDS file addr of BANK list 1st entry: " + hexN(view.byteOffset + symbOffs + symbNameOffs, 8));
-
-                let bankNameArr = [];
-                let bankNameCharOffs = 0;
-                // Read C string from symbol
-                let char;
-                do {
-                    char = read8(symbView, symbNameOffs + bankNameCharOffs);
-                    bankNameCharOffs++;
-                    if (char !== 0) {
-                        bankNameArr.push(char);
-                    }
-                } while (char !== 0);
+                let bankNameOffs = read32LE(symbView, symbBankListOffs + 4 + i * 4);
+                if (i === 0) console.log("NDS file addr of BANK list 1st entry: " + hexN(view.byteOffset + symbOffs + bankNameOffs, 8));
 
                 // for some reason games have a ton of empty symbols -- skip them
-                if (symbNameOffs !== 0) {
-                    let bankName = String.fromCharCode(...bankNameArr);
+                if (bankNameOffs !== 0) {
+                    let bankName = readCString(symbView, bankNameOffs);
 
                     sdat.sbnkNameIdDict.set(bankName, i);
                     sdat.sbnkIdNameDict.set(i, bankName);
@@ -680,7 +713,7 @@ class Sdat {
         }
 
         {
-            // SWAR symbols
+            // SWAR symbols (TODO)
             let symbSwarListOffs = read32LE(symbView, 0x14);
             let symbSwarListNumEntries = read32LE(symbView, symbSwarListOffs);
 
@@ -1538,7 +1571,7 @@ class SequenceTrack {
                 {
                     this.volume = this.readLastPcInc() & 0xff;
                     this.sendMessage(false, MessageType.VolumeChange, this.volume);
-                    //this.debugLogForce("Volume: " + this.volume);
+                    this.debugLogForce("Volume: " + this.volume);
                     break;
                 }
                 case 0x81: // Set bank and program
@@ -1707,7 +1740,7 @@ class SequenceTrack {
                     this.sendMessage(false, MessageType.TrackEnded);
                     // Set restingFor to non-zero since the controller checks it to stop executing
                     this.restingFor = 1;
-                    this.debugLogForce("Track hit a FIN, id " + this.id);
+                    this.debugLogForce("Track hit a FIN");
                     break;
                 }
                 case 0xD0: // Attack Rate
@@ -2155,13 +2188,52 @@ const sLfoSinTable = [
 
 class Controller {
     /**
-     @param {number} sampleRate
-     @param {Sdat} sdat
-     @param sampleRate
-     @param sdat
-     @param {number} sseqId
+     * @param {number} sampleRate
      */
-    constructor(sampleRate, sdat, sseqId) {
+    constructor(sampleRate) {
+
+        /** @type {Sample[][]} */
+        this.decodedSampleArchives = [];
+
+        /** @type {CircularBuffer<Message>} */
+        this.messageBuffer = new CircularBuffer(1024);
+        this.sequence = null;
+
+        /** @type {Uint8Array[]} */
+        this.notesOn = [];
+        this.notesOnKeyboard = [];
+        for (let i = 0; i < 16; i++) {
+            this.notesOn[i] = new Uint8Array(128);
+            this.notesOnKeyboard[i] = new Uint8Array(128);
+        }
+
+        /** @type {SampleSynthesizer[]} */
+        this.synthesizers = new Array(16);
+        for (let i = 0; i < 16; i++) {
+            this.synthesizers[i] = new SampleSynthesizer(sampleRate, 16);
+        }
+
+        this.jumps = 0;
+        this.fadingStart = false;
+        /**
+         * @type {{ trackNum: number; midiNote: number; velocity: number; synthInstrIndex: number; startTime: number; endTime: number; instrument: InstrumentRecord; instrumentEntryIndex: number; adsrState: number; adsrTimer: number; // idk why this number, ask gbatek
+         fromKeyboard: boolean; lfoCounter: number; lfoDelayCounter: number; delayCounter: number; }[]}
+         */
+        this.activeNoteData = [];
+        this.bpmTimer = 0;
+        /**
+         * @type {number | null}
+         */
+        this.activeKeyboardTrackNum = null;
+    }
+
+    /**
+     * @param {Sdat} sdat
+     * @param {number} sseqId
+     */
+    loadSseq(sdat, sseqId) {
+        this.sdat = sdat;
+
         let sseqInfo = sdat.sseqInfos[sseqId];
         if (!sseqInfo) throw new Error();
         if (sseqInfo.bank === null) throw new Error();
@@ -2177,8 +2249,110 @@ class Controller {
         let sseqFile = sdat.fat.get(sseqInfo.fileId);
         if (!sseqFile) throw new Error();
 
-        /** @type {Sample[][]} */
-        this.decodedSampleArchives = [];
+        this.decodeSampleArchives();
+
+        let dataOffset = read32LE(sseqFile, 0x18);
+        if (dataOffset !== 0x1C) alert("SSEQ offset is not 0x1C? it is: " + hex(dataOffset, 8));
+
+        /** @type {CircularBuffer<Message>} */
+        this.messageBuffer = new CircularBuffer(1024);
+        this.sequence = new Sequence(sseqFile, dataOffset, this.messageBuffer);
+
+        /** @type {Uint8Array[]} */
+        // this.notesOn = [];
+        // this.notesOnKeyboard = [];
+        // for (let i = 0; i < 16; i++) {
+        //     this.notesOn[i] = new Uint8Array(128);
+        //     this.notesOnKeyboard[i] = new Uint8Array(128);
+        // }
+
+        /** @type {SampleSynthesizer[]} */
+        // this.synthesizers = new Array(16);
+        // for (let i = 0; i < 16; i++) {
+        //     this.synthesizers[i] = new SampleSynthesizer(sampleRate, 16);
+        // }
+
+        this.jumps = 0;
+        this.fadingStart = false;
+        /**
+         * @type {{ trackNum: number; midiNote: number; velocity: number; synthInstrIndex: number; startTime: number; endTime: number; instrument: InstrumentRecord; instrumentEntryIndex: number; adsrState: number; adsrTimer: number; // idk why this number, ask gbatek
+         fromKeyboard: boolean; lfoCounter: number; lfoDelayCounter: number; delayCounter: number; }[]}
+         */
+        this.activeNoteData = [];
+        this.bpmTimer = 0;
+        /**
+         * @type {number | null}
+         */
+        this.activeKeyboardTrackNum = null;
+    }
+
+    /**
+     * @param {Sdat} sdat
+     * @param {number} ssarId
+     * @param {number} subSseqId
+     */
+    loadSsarSeq(sdat, ssarId, subSseqId) {
+        console.log('Loading SSAR: ' + ssarId + ', Sub-Seq: ' + subSseqId);
+
+        this.sdat = sdat;
+
+        let ssarInfo = sdat.ssarInfos[ssarId];
+        if (!ssarInfo) throw new Error();
+        let ssarFile = sdat.fat.get(ssarInfo.fileId);
+        if (!ssarFile) throw new Error();
+
+        let ssarListNumEntries = read32LE(ssarFile, 28);
+        let ssarListOffs = 32 + subSseqId * 12;
+
+        let bank = read16LE(ssarFile, ssarListOffs + 4);
+        this.bankInfo = sdat.sbnkInfos[bank];
+        if (!this.bankInfo) throw new Error();
+        console.log('SSAR bank ID: ' + bank);
+        this.instrumentBank = sdat.instrumentBanks[bank];
+        if (!this.instrumentBank) throw new Error();
+
+        this.decodeSampleArchives();
+
+        let dataOffset = read32LE(ssarFile, 24);
+        if (dataOffset !== ssarListNumEntries * 12 + 32) alert("SSEQ offset is not ssarListNumEntries * 12 + 32? it is: " + hex(dataOffset, 8));
+
+        /** @type {CircularBuffer<Message>} */
+        this.messageBuffer = new CircularBuffer(1024);
+        this.sequence = new Sequence(ssarFile, dataOffset, this.messageBuffer);
+
+        let trackPCOffset = read32LE(ssarFile, ssarListOffs);
+        this.sequence.tracks[0].pc = trackPCOffset;
+
+        /** @type {Uint8Array[]} */
+        // this.notesOn = [];
+        // this.notesOnKeyboard = [];
+        // for (let i = 0; i < 16; i++) {
+        //     this.notesOn[i] = new Uint8Array(128);
+        //     this.notesOnKeyboard[i] = new Uint8Array(128);
+        // }
+
+        /** @type {SampleSynthesizer[]} */
+        // this.synthesizers = new Array(16);
+        // for (let i = 0; i < 16; i++) {
+        //     this.synthesizers[i] = new SampleSynthesizer(sampleRate, 16);
+        // }
+
+        this.jumps = 0;
+        this.fadingStart = false;
+        /**
+         * @type {{ trackNum: number; midiNote: number; velocity: number; synthInstrIndex: number; startTime: number; endTime: number; instrument: InstrumentRecord; instrumentEntryIndex: number; adsrState: number; adsrTimer: number; // idk why this number, ask gbatek
+         fromKeyboard: boolean; lfoCounter: number; lfoDelayCounter: number; delayCounter: number; }[]}
+         */
+        this.activeNoteData = [];
+        this.bpmTimer = 0;
+        /**
+         * @type {number | null}
+         */
+        this.activeKeyboardTrackNum = null;
+    }
+
+    decodeSampleArchives() {
+        this.decodedSampleArchives.length = 0;
 
         let nSamples = 0;
         let sSamples = 0;
@@ -2186,11 +2360,11 @@ class Controller {
         for (let i = 0; i < 4; i++) {
             let decodedArchive = [];
             let swarId = this.bankInfo.swarId[i];
-            let swarInfo = sdat.swarInfos[swarId];
+            let swarInfo = this.sdat.swarInfos[swarId];
             if (swarInfo != null) {
                 console.log(`Linked archive: ${this.bankInfo.swarId[0]}`);
                 if (swarInfo.fileId == null) throw new Error();
-                let swarFile = sdat.fat.get(swarInfo.fileId);
+                let swarFile = this.sdat.fat.get(swarInfo.fileId);
                 if (swarFile == null) throw new Error();
 
                 let sampleCount = read32LE(swarFile, 0x38);
@@ -2272,41 +2446,6 @@ class Controller {
                 console.log(`Program ${i}: ${typeString}\nLinked archive ${instrument.swarInfoId[0]} Sample ${instrument.swavInfoId[0]}`);
             }
         }
-
-        let dataOffset = read32LE(sseqFile, 0x18);
-        if (dataOffset !== 0x1C) alert("SSEQ offset is not 0x1C? it is: " + hex(dataOffset, 8));
-
-        this.sdat = sdat;
-        /** @type {CircularBuffer<Message>} */
-        this.messageBuffer = new CircularBuffer(1024);
-        this.sequence = new Sequence(sseqFile, dataOffset, this.messageBuffer);
-
-        /** @type {Uint8Array[]} */
-        this.notesOn = [];
-        this.notesOnKeyboard = [];
-        for (let i = 0; i < 16; i++) {
-            this.notesOn[i] = new Uint8Array(128);
-            this.notesOnKeyboard[i] = new Uint8Array(128);
-        }
-
-        /** @type {SampleSynthesizer[]} */
-        this.synthesizers = new Array(16);
-        for (let i = 0; i < 16; i++) {
-            this.synthesizers[i] = new SampleSynthesizer(sampleRate, 16);
-        }
-
-        this.jumps = 0;
-        this.fadingStart = false;
-        /**
-         * @type {{ trackNum: number; midiNote: number; velocity: number; synthInstrIndex: number; startTime: number; endTime: number; instrument: InstrumentRecord; instrumentEntryIndex: number; adsrState: number; adsrTimer: number; // idk why this number, ask gbatek
-         fromKeyboard: boolean; lfoCounter: number; lfoDelayCounter: number; delayCounter: number; }[]}
-         */
-        this.activeNoteData = [];
-        this.bpmTimer = 0;
-        /**
-         * @type {number | null}
-         */
-        this.activeKeyboardTrackNum = null;
     }
 
     tick() {
@@ -2652,43 +2791,19 @@ function bitTest(i, bit) {
     return (i & (1 << bit)) !== 0;
 }
 
-/**
- * @param {Sdat} sdat
- * @param {number} id
- */
-async function playSeqById(sdat, id) {
-    await playSeq(sdat, sdat.sseqIdNameDict.get(id));
-}
 
 /**
- * @param {Sdat} sdat
- * @param {string} name
+ * @param {AudioPlayer} player
+ * @param {Controller} controller
+ * @param {FsVisController} fsVisController
  */
-async function playSeq(sdat, name) {
-    g_currentlyPlayingSdat = sdat;
-    g_currentlyPlayingName = name;
-    if (g_currentController) {
-        await g_currentPlayer?.ctx.close();
-    }
-
-    const BUFFER_SIZE = 1024;
-    let player = new AudioPlayer(BUFFER_SIZE, synthesizeMore, null);
-    g_currentPlayer = player;
+function playController(player, controller, fsVisController) {
+    const BUFFER_SIZE = player.bufferLength;
     const SAMPLE_RATE = player.sampleRate;
     console.log("Playing with sample rate: " + SAMPLE_RATE);
 
-    let id = sdat.sseqNameIdDict.get(name);
-
-    g_currentlyPlayingId = id;
-
     let bufferL = new Float64Array(BUFFER_SIZE);
     let bufferR = new Float64Array(BUFFER_SIZE);
-
-    let fsVisController = new FsVisController(sdat, id, 384 * 5);
-    let controller = new Controller(SAMPLE_RATE, sdat, id);
-
-    g_currentController = controller;
-    currentFsVisController = fsVisController;
 
     let timer = 0;
 
@@ -2703,7 +2818,7 @@ async function playSeq(sdat, name) {
                 timer -= 64 * 2728 * SAMPLE_RATE;
 
                 controller.tick();
-                fsVisController.tick();
+                //fsVisController.tick(); TODO: what exactly does this component do ...?
             }
 
             let valL = 0;
@@ -2722,8 +2837,80 @@ async function playSeq(sdat, name) {
 
         player.queueAudio(bufferL, bufferR);
     }
+    player.needMoreSamples = synthesizeMore;
 
     synthesizeMore();
+}
+
+/**
+ * @param {Sdat} sdat
+ * @param {string} name
+ */
+async function playSeq(sdat, name) {
+    g_currentlyPlayingSdat = sdat;
+    g_currentlyPlayingName = name;
+    if (g_currentController) {
+        await g_currentPlayer?.ctx.close();
+    }
+
+    const BUFFER_SIZE = 1024;
+    let player = new AudioPlayer(BUFFER_SIZE, null, null);
+    g_currentPlayer = player;
+    const SAMPLE_RATE = player.sampleRate;
+    console.log("Playing with sample rate: " + SAMPLE_RATE);
+
+    let id = sdat.sseqNameIdDict.get(name);
+
+    g_currentlyPlayingId = id;
+
+    let fsVisController = new FsVisController(sdat, id, 384 * 5);
+    let controller = new Controller(SAMPLE_RATE);
+    controller.loadSseq(sdat, id);
+
+    g_currentController = controller;
+    currentFsVisController = fsVisController;
+
+    playController(player, controller, fsVisController);
+}
+
+/**
+ * @param {Sdat} sdat
+ * @param {number} id
+ */
+async function playSeqById(sdat, id) {
+    await playSeq(sdat, sdat.sseqIdNameDict.get(id));
+}
+
+/**
+ * @param {Sdat} sdat
+ * @param {string} ssarName
+ * @param {number} seqId
+ */
+async function playSsarSeq(sdat, ssarName, seqId) {
+    g_currentlyPlayingSdat = sdat;
+    g_currentlyPlayingName = name;
+    if (g_currentController) {
+        await g_currentPlayer?.ctx.close();
+    }
+
+    const BUFFER_SIZE = 1024;
+    let player = new AudioPlayer(BUFFER_SIZE, null, null);
+    g_currentPlayer = player;
+    const SAMPLE_RATE = player.sampleRate;
+    console.log("Playing with sample rate: " + SAMPLE_RATE);
+
+    let ssarId = sdat.ssarNameIdDict.get(ssarName);
+
+    // g_currentlyPlayingId = id; // TODO: make another variable for ssar id
+
+    let fsVisController = null; //new FsVisController(sdat, id, 384 * 5); // TODO: make this object compatible with loading SSARs
+    let controller = new Controller(SAMPLE_RATE);
+    controller.loadSsarSeq(sdat, ssarId, seqId);
+
+    g_currentController = controller;
+    currentFsVisController = fsVisController;
+
+    playController(player, controller, null);
 }
 
 /**
