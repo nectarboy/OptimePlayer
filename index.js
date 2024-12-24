@@ -49,17 +49,40 @@ async function loadNdsRom(data) {
     console.log(`ROM size: ${data.length} bytes`);
 
     let sdats = Sdat.loadAllFromDataView(new DataView(data.buffer));
+    console.log('SDATS', sdats);
 
-    for (const sdat of sdats) {
+    for (let i = 0; i < sdats.length; i++) {
+        const sdat = sdats[i];
+
         if (sdat != null) {
+            if (sdats.length > 1)
+                songPicker.insertAdjacentHTML("beforeend", '<h2>SDAT' + i + ':</h2>');
+
+            // Sequences
+            songPicker.insertAdjacentHTML("beforeend", '<h3>Sequences:</h3>');
             for (const [key, value] of sdat.sseqIdNameDict) {
                     let button = document.createElement('button');
                 button.innerText = `${value} (ID: ${key})`;
                     button.style.textAlign = 'left';
-                document.querySelector(".song-picker")?.appendChild(button);
+                songPicker.appendChild(button);
                     button.onclick = () => {
                             playSeq(sdat, value);
                     };
+            }
+
+            // Sequence Archives
+            for (const [key, value] of sdat.ssarIdNameDict) {
+                songPicker.insertAdjacentHTML("beforeend", '<h3>Sequence Archive ' + key + ' (' + value + '):</h3>');
+
+                for (const [subKey, subValue] of sdat.ssarSseqSymbols[key].ssarSseqIdNameDict) {
+                        let button = document.createElement('button');
+                    button.innerText = `${subValue} (ID: ${subKey})`;
+                        button.style.textAlign = 'left';
+                    songPicker.appendChild(button);
+                        button.onclick = () => {
+                                playSsarSeq(sdat, value, subKey);
+                        };
+                }
             }
 
             console.log("Searching for STRMs");
