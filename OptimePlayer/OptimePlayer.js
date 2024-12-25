@@ -1236,7 +1236,7 @@ class Sequence {
                     while (this.tracks[i].restingFor === 0 && !this.tracks[i].restUntilEndOfNote) {
                         this.tracks[i].execute();
                     }
-                    this.tracks[i].restingFor--;
+                    this.tracks[i].restingFor -= !this.tracks[i].restUntilEndOfNote;
                 }
 
                 for (let index in this.tracks[i].activeChannels) {
@@ -1536,7 +1536,7 @@ class SequenceTrack {
                     this.tie = this.readPcInc();
                     this.debugLog("Tie On / Off: " + this.tie);
 
-                    // Apparently when tie is turned off, all currently playing channels immediately stop
+                    // Apparently when a tie command is reached, the track's currently playing channels immediately stop
                     this.lastActiveChannel = null;
                     for (let i in this.activeChannels) {
                         var channel = this.activeChannels[i];
@@ -1650,13 +1650,13 @@ class SequenceTrack {
                 }
                 case 0xC3: // Transpose
                 {
-                    this.transpose = this.readPcInc() << 24 >> 24;
+                    this.transpose = this.readLastPcInc() << 24 >> 24;
                     this.debugLog("Transpose: " + this.transpose);
                     break;
                 }
                 case 0xC4: // Pitch Bend
                 {
-                    this.pitchBend = this.readLastPcInc();
+                    this.pitchBend = this.readLastPcInc() << 24 >> 24;
                     this.debugLog("Pitch Bend: " + this.pitchBend);
                     this.sendMessage(false, MessageType.PitchBend);
                     break;
@@ -2229,6 +2229,7 @@ class Controller {
          */
         this.activeNoteData = [];
         this.bpmTimer = 0;
+        this.lfoValue = BigInt(0);
         /**
          * @type {number | null}
          */
@@ -2456,6 +2457,22 @@ class Controller {
         }
     }
 
+    updateNoteFinetuneLfo(note) {
+        let instr = this.synthesizers[note.trackNum].instrs[note.synthInstrIndex];
+
+        var finetune;
+        if (note.sweepPitch && note.sweepCounter) {
+            finetune = note.sweepPitch * (note.sweepCounter / note.sweepLength);
+        }
+        else {
+            finetune = 0;
+        }
+
+        finetune += (this.sequence.tracks[note.trackNum].lfoType === LfoType.Pitch) * Number(this.lfoValue);
+
+        instr.setFinetuneLfo((finetune) / 64);
+    }
+
     tick() {
         let indexToDelete = -1;
 
@@ -2493,11 +2510,10 @@ class Controller {
 
                 // LFO code based off pret/pokediamond
                 let track = this.sequence.tracks[entry.trackNum];
-                let lfoValue;
                 if (track.lfoDepth === 0) {
-                    lfoValue = BigInt(0);
+                    this.lfoValue = BigInt(0);
                 } else if (entry.lfoDelayCounter++ < track.lfoDelay) {
-                    lfoValue = BigInt(0);
+                    this.lfoValue = BigInt(0);
                 } else {
                     /**
                      * pret/pokediamond
@@ -2516,34 +2532,36 @@ class Controller {
                     }
 
 
-                    lfoValue = BigInt(SND_SinIdx(entry.lfoCounter >>> 8) * track.lfoDepth * track.lfoRange);
+                    this.lfoValue = BigInt(SND_SinIdx(entry.lfoCounter >>> 8) * track.lfoDepth * track.lfoRange);
                 }
 
                 // OPTIMIZE
-                if (lfoValue !== 0n) {
+                if (this.lfoValue !== 0n) {
                     switch (track.lfoType) {
                         case LfoType.Volume:
-                            lfoValue *= 60n;
+                            this.lfoValue *= 60n;
                             break;
                         case LfoType.Pitch:
-                            lfoValue <<= 6n;
+                            this.lfoValue <<= 6n;
                             break;
                         case LfoType.Pan:
-                            lfoValue <<= 6n;
+                            this.lfoValue <<= 6n;
                             break;
                     }
-                    lfoValue >>= 14n;
+                    this.lfoValue >>= 14n;
                 }
 
-                var finetune;
-                if (entry.sweepPitch && entry.sweepCounter) {
-                    finetune = entry.sweepPitch * (entry.sweepCounter / entry.sweepLength);
-                    if (entry.autoSweep)
-                        entry.sweepCounter--;
-                }
-                else {
-                    finetune = 0;
-                }
+                // var finetune;
+                // if (entry.sweepPitch && entry.sweepCounter) {
+                //     finetune = entry.sweepPitch * (entry.sweepCounter / entry.sweepLength);
+                //     if (entry.autoSweep)
+                //         entry.sweepCounter--;
+                // }
+                // else {
+                //     finetune = 0;
+                // }
+                if (entry.sweepPitch && entry.sweepCounter && entry.autoSweep)
+                    entry.sweepCounter--;
 
                 if (entry.delayCounter < track.lfoDelay) {
                     entry.delayCounter++;
@@ -2558,21 +2576,22 @@ class Controller {
                     entry.lfoCounter &= 0xFF;
                     entry.lfoCounter |= tmp << 8;
 
-                    if (lfoValue !== 0n) {
-                        switch (track.lfoType) {
-                            case LfoType.Pitch:
-                                // LFO value is in 1/64ths of a semitone
-                                finetune += Number(lfoValue);
-                                //instr.setFinetuneLfo(Number(lfoValue) / 64);
-                                break;
-                            default:
-                                break;
-                        }
-                    }
+                    // if (this.lfoValue !== 0n) {
+                    //     switch (track.lfoType) {
+                    //         case LfoType.Pitch:
+                    //             // LFO value is in 1/64ths of a semitone
+                    //             finetune += Number(this.lfoValue);
+                    //             //instr.setFinetuneLfo(Number(lfoValue) / 64);
+                    //             break;
+                    //         default:
+                    //             break;
+                    //     }
+                    // }
 
                 }
 
-                instr.setFinetuneLfo((finetune) / 64);
+                //instr.setFinetuneLfo((finetune) / 64);
+                this.updateNoteFinetuneLfo(entry);
 
                 // all thanks to @ipatix at pret/pokediamond
                 switch (entry.adsrState) {
@@ -2752,6 +2771,7 @@ class Controller {
                             channel.sweepCounter = sweepLength;
                             channel.sweepLength = sweepLength;
                             channel.autoSweep = autoSweep;
+                            this.updateNoteFinetuneLfo(channel);
                         }
                         break;
                     case MessageType.Jump: {
