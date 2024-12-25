@@ -729,7 +729,10 @@ window.onload = async () => {
         let restartSequenceButton = document.querySelector("#restart-sequence-button");
         restartSequenceButton.onclick = () => {
             pauseButton.innerText = "Pause Sequence Player";
-            playSeq(g_currentlyPlayingSdat, g_currentlyPlayingName);
+            if (g_currentlyPlayingIsSsar)
+                playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingName, g_currentlyPlayingSubId);
+            else
+                playSeq(g_currentlyPlayingSdat, g_currentlyPlayingName);
         };
     });
 

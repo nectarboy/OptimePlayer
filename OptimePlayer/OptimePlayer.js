@@ -20,6 +20,10 @@ let g_currentlyPlayingName = null;
 let g_currentlyPlayingSdat = null;
 /** @type {number} */
 let g_currentlyPlayingId = 0;
+/** @type {number} */
+let g_currentlyPlayingSubId = 0;
+/** @type {bool} */
+let g_currentlyPlayingIsSsar = false;
 /** @type {AudioPlayer | null} */
 let g_currentPlayer = null;
 
@@ -1229,15 +1233,16 @@ class Sequence {
         if (!this.paused) {
             for (let i = 0; i < 16; i++) {
                 if (this.tracks[i].active) {
-                    for (let index in this.tracks[i].activeChannels) {
-                        var channel = this.tracks[i].activeChannels[index];
-                        if (!channel.autoSweep && channel.sweepCounter)
-                            channel.sweepCounter--;
-                    }
-                    while (this.tracks[i].restingFor === 0) {
+                    while (this.tracks[i].restingFor === 0 && !this.tracks[i].restUntilEndOfNote) {
                         this.tracks[i].execute();
                     }
                     this.tracks[i].restingFor--;
+                }
+
+                for (let index in this.tracks[i].activeChannels) {
+                    var channel = this.tracks[i].activeChannels[index];
+                    if (!channel.autoSweep && channel.sweepCounter)
+                        channel.sweepCounter--;
                 }
             }
         }
@@ -1331,6 +1336,7 @@ class SequenceTrack {
         this.sweepPitch = 0;
 
         this.restingFor = 0;
+        this.restUntilEndOfNote = false;
 
         this.stack = new Uint32Array(64);
         this.loopStack = new Uint32Array(64);
@@ -1468,7 +1474,7 @@ class SequenceTrack {
                 note = 0x7f;
 
             let velocity = this.readPcInc();
-            let duration = this.isSubOpcode ? this.subParam : this.readVariableLength();
+            let duration = this.readLastVariableLength();
 
             this.debugLog("Note: " + note);
             this.debugLog("Velocity: " + velocity);
@@ -1476,6 +1482,8 @@ class SequenceTrack {
 
             if (this.mono) {
                 this.restingFor = duration;
+                if (duration === 0)
+                    this.restUntilEndOfNote = true;
             }
 
             this.sendMessage(false, MessageType.PlayNote, note, velocity, duration);
@@ -1507,13 +1515,13 @@ class SequenceTrack {
                 }
                 case 0xA0: // Random
                 {
-                    this.debugLog('RANDOM, opcode is ' + hexN(this.readPc(),2));
+                    this.debugLogForce('RANDOM, opcode is ' + hexN(this.readPc(),2));
                     this.paramOverride = ParamOverride.Random;
                     break;
                 }
                 case 0xA1: // Variable
                 {
-                    this.debugLog('VARIABLE, opcode is ' + hexN(this.readPc(),2));
+                    this.debugLogForce('VARIABLE, opcode is ' + hexN(this.readPc(),2));
                     this.paramOverride = ParamOverride.Variable;
                     break;
                 }
@@ -1571,7 +1579,7 @@ class SequenceTrack {
                 {
                     this.volume = this.readLastPcInc() & 0xff;
                     this.sendMessage(false, MessageType.VolumeChange, this.volume);
-                    this.debugLogForce("Volume: " + this.volume);
+                    //this.debugLogForce("Volume: " + this.volume);
                     break;
                 }
                 case 0x81: // Set bank and program
@@ -2465,6 +2473,7 @@ class Controller {
                     // @ts-ignore
                     indexToDelete = index;
                     this.synthesizers[entry.trackNum].cutInstrument(entry.synthInstrIndex);
+                    this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
                 }
 
                 if (entry.stopFlag) {
@@ -2472,9 +2481,10 @@ class Controller {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
                         entry.adsrTimer = -92544;
+                        this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
                     }
                 }
-                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard) {
+                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !this.sequence.tracks[entry.trackNum].restUntilEndOfNote) {
                     if (entry.adsrState !== AdsrState.Release) {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
@@ -2762,7 +2772,7 @@ class Controller {
                         break;
                     }
                     case MessageType.VolumeChange: {
-                        this.synthesizers[msg.trackNum].volume = msg.param0 / 127;
+                        this.synthesizers[msg.trackNum].volume = (msg.param0 / 127) ** 2;
                         break;
                     }
                     case MessageType.PanChange: {
@@ -2862,6 +2872,7 @@ async function playSeq(sdat, name) {
     let id = sdat.sseqNameIdDict.get(name);
 
     g_currentlyPlayingId = id;
+    g_currentlyPlayingIsSsar = false;
 
     let fsVisController = new FsVisController(sdat, id, 384 * 5);
     let controller = new Controller(SAMPLE_RATE);
@@ -2888,7 +2899,7 @@ async function playSeqById(sdat, id) {
  */
 async function playSsarSeq(sdat, ssarName, seqId) {
     g_currentlyPlayingSdat = sdat;
-    g_currentlyPlayingName = name;
+    g_currentlyPlayingName = ssarName;
     if (g_currentController) {
         await g_currentPlayer?.ctx.close();
     }
@@ -2901,7 +2912,9 @@ async function playSsarSeq(sdat, ssarName, seqId) {
 
     let ssarId = sdat.ssarNameIdDict.get(ssarName);
 
-    // g_currentlyPlayingId = id; // TODO: make another variable for ssar id
+    g_currentlyPlayingId = ssarId;
+    g_currentlyPlayingSubId = seqId;
+    g_currentlyPlayingIsSsar = true;
 
     let fsVisController = null; //new FsVisController(sdat, id, 384 * 5); // TODO: make this object compatible with loading SSARs
     let controller = new Controller(SAMPLE_RATE);
