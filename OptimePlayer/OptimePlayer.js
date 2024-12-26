@@ -584,6 +584,7 @@ class Sdat {
 
         let symbOffs = read32LE(view, 0x10);
         let symbSize = read32LE(view, 0x14);
+        let noSymbBlock = symbOffs === 0 || symbSize === 0;
         let infoOffs = read32LE(view, 0x18);
         let infoSize = read32LE(view, 0x1C);
         let fatOffs = read32LE(view, 0x20);
@@ -1299,6 +1300,9 @@ class SequenceTrack {
         /** @type {Sequence} */
         this.sequence = sequence;
         this.id = id;
+
+        this.conditionalFlag = true;
+        this.exeCommandFlag = true;
         this.paramOverride = ParamOverride.Null;
 
         this.active = false;
@@ -1327,7 +1331,7 @@ class SequenceTrack {
 
         this.expression = 0;
 
-        this.tie = 0;
+        this.tie = false;
 
         this.portamentoEnable = 0;
         this.portamentoKey = 60;
@@ -1392,6 +1396,10 @@ class SequenceTrack {
             this.loopSp -= this.loopStackCount[i] === 0;
         }
         return val;
+    }
+
+    read(addr) {
+        return this.sequence.sseqFile.getUint8(addr + this.sequence.dataOffset);
     }
 
     readPc() {
@@ -1464,8 +1472,6 @@ class SequenceTrack {
     }
 
     executeOpcode(opcode) {
-        //c1 cb
-
         if (opcode <= 0x7F) {
             let note = opcode + this.transpose;
             if (note < 0)
@@ -1489,97 +1495,10 @@ class SequenceTrack {
             this.sendMessage(false, MessageType.PlayNote, note, velocity, duration);
         } else {
             switch (opcode) {
-                case 0xFE: // Allocate track
+                case 0x80: // Rest
                 {
-                    // This probably isn't important for emulation
-                    let alloced = this.readPcInc(2);
-
-                    for (let i = 0; i < 16; i++) {
-                        if (bitTest(alloced, i)) {
-                            this.debugLog("Allocated track " + i);
-                        }
-                    }
-                    break;
-                }
-                case 0x93: // Start new track thread 
-                {
-                    let trackNum = this.readPcInc();
-                    let trackOffs = this.readPcInc(3);
-
-                    this.sequence.startTrack(trackNum, trackOffs);
-
-                    this.debugLogForce("Started track thread " + trackNum);
-                    this.debugLog("Offset: " + hex(trackOffs, 6));
-
-                    break;
-                }
-                case 0xA0: // Random
-                {
-                    this.debugLogForce('RANDOM, opcode is ' + hexN(this.readPc(),2));
-                    this.paramOverride = ParamOverride.Random;
-                    break;
-                }
-                case 0xA1: // Variable
-                {
-                    this.debugLogForce('VARIABLE, opcode is ' + hexN(this.readPc(),2));
-                    this.paramOverride = ParamOverride.Variable;
-                    break;
-                }
-                case 0xC7: // Mono / Poly
-                {
-                    let param = this.readPcInc();
-                    this.mono = bitTest(param, 0);
-                    break;
-                }
-                case 0xC8: // Tie On / Off
-                {
-                    this.tie = this.readPcInc();
-                    this.debugLog("Tie On / Off: " + this.tie);
-
-                    // Apparently when a tie command is reached, the track's currently playing channels immediately stop
-                    this.lastActiveChannel = null;
-                    for (let i in this.activeChannels) {
-                        var channel = this.activeChannels[i];
-                        channel.stopFlag = true;
-                    }
-
-                    break;
-                }
-                case 0xC9: // Portamento Control
-                {
-                    this.portamentoKey = (this.readPcInc() + this.transpose);
-                    if (this.portamentoKey < 0)
-                        this.portamentoKey = 0;
-                    else if (this.portamentoKey > 0x7f)
-                        this.portamentoKey = 0x7f;
-
-                    this.portamentoEnable = 1;
-                    this.debugLog("Portamento Control: " + this.portamentoKey);
-                    break;
-                }
-                case 0xCE: // Portamento On / Off
-                {
-                    this.portamentoEnable = this.readPcInc();
-                    this.debugLog("Portamento On / Off: " + this.portamentoEnable);
-                    break;
-                }
-                case 0xCF: // Portamento Time
-                {
-                    this.portamentoTime = this.readPcInc();
-                    this.debugLog("Portamento Time: " + this.portamentoTime);
-                    break;
-                }
-                case 0xE1: // BPM
-                {
-                    this.bpm = this.readPcInc(2);
-                    this.debugLog("BPM: " + this.bpm);
-                    break;
-                }
-                case 0xC1: // Volume
-                {
-                    this.volume = this.readLastPcInc() & 0xff;
-                    this.sendMessage(false, MessageType.VolumeChange, this.volume);
-                    //this.debugLogForce("Volume: " + this.volume);
+                    this.restingFor = this.readLastVariableLength();
+                    this.debugLog("Resting For: " + this.restingFor);
                     break;
                 }
                 case 0x81: // Set bank and program
@@ -1593,78 +1512,16 @@ class SequenceTrack {
                     this.sendMessage(false, MessageType.InstrumentChange, this.bank, this.program);
                     break;
                 }
-                case 0xC2: // Master Volume
+                case 0x93: // Start new track thread 
                 {
-                    this.masterVolume = this.readPcInc();
-                    this.debugLogForce("Master Volume: " + this.masterVolume);
-                    console.warn('UNIMPLEMENTED MASTER VOLUME');
-                    break;
-                }
-                case 0xC0: // Pan
-                {
-                    this.pan = this.readPcInc();
-                    if (this.pan === 127) this.pan = 128;
-                    this.debugLog("Pan: " + this.pan);
-                    this.sendMessage(false, MessageType.PanChange, this.pan);
-                    break;
-                }
-                case 0xC6: // Track Priority
-                {
-                    this.priority = this.readPcInc();
-                    this.debugLog("Track Priority: " + this.priority);
-                    break;
-                }
-                case 0xC5: // Pitch Bend Range
-                {
-                    this.pitchBendRange = this.readPcInc();
-                    this.debugLog("Pitch Bend Range: " + this.pitchBendRange);
-                    this.sendMessage(false, MessageType.PitchBend);
-                    break;
-                }
-                case 0xCA: // LFO Depth
-                {
-                    this.lfoDepth = this.readPcInc();
-                    this.debugLog("LFO Depth: " + this.lfoDepth);
-                    break;
-                }
-                case 0xCB: // LFO Speed
-                {
-                    this.lfoSpeed = this.readLastPcInc() & 0xff;
-                    this.debugLog("LFO Speed: " + this.lfoSpeed);
-                    break;
-                }
-                case 0xCC: // LFO Type
-                {
-                    this.lfoType = this.readPcInc();
-                    this.debugLog("LFO Type: " + this.lfoType);
-                    if (this.lfoType !== LfoType.Volume) {
-                        console.warn("Unimplemented LFO type: " + this.lfoType);
-                    }
-                    break;
-                }
-                case 0xCD: // LFO Range
-                {
-                    this.lfoRange = this.readPcInc();
-                    this.debugLog("LFO Range: " + this.lfoRange);
-                    break;
-                }
-                case 0xC3: // Transpose
-                {
-                    this.transpose = this.readLastPcInc() << 24 >> 24;
-                    this.debugLog("Transpose: " + this.transpose);
-                    break;
-                }
-                case 0xC4: // Pitch Bend
-                {
-                    this.pitchBend = this.readLastPcInc() << 24 >> 24;
-                    this.debugLog("Pitch Bend: " + this.pitchBend);
-                    this.sendMessage(false, MessageType.PitchBend);
-                    break;
-                }
-                case 0x80: // Rest
-                {
-                    this.restingFor = this.readVariableLength();
-                    this.debugLog("Resting For: " + this.restingFor);
+                    let trackNum = this.readPcInc();
+                    let trackOffs = this.readPcInc(3);
+
+                    this.sequence.startTrack(trackNum, trackOffs);
+
+                    this.debugLogForce("Started track thread " + trackNum);
+                    this.debugLog("Offset: " + hex(trackOffs, 6));
+
                     break;
                 }
                 case 0x94: // Jump
@@ -1686,27 +1543,178 @@ class SequenceTrack {
                     this.pc = dest;
                     break;
                 }
-                case 0xFD: // Return
+                case 0xA0: // Random
                 {
-                    this.pc = this.pop();
+                    this.debugLogForce('RANDOM, opcode is ' + hexN(this.readPc(),2));
+                    this.paramOverride = ParamOverride.Random;
+                    break;
+                }
+                case 0xA1: // Variable
+                {
+                    this.debugLogForce('VARIABLE, opcode is ' + hexN(this.readPc(),2));
+                    this.paramOverride = ParamOverride.Variable;
+                    break;
+                }
+                case 0xA2: // Conditional Execution
+                {
+                    this.debugLogForce('CONDITIONAL EXE (' + this.conditionalFlag + '), opcode is ' + hexN(this.readPc(),2));
+                    if (!this.conditionalFlag)
+                        this.pc += this.determineCommandLength(this.pc);
+                    break;
+                }
+                case 0xC0: // Pan
+                {
+                    this.pan = this.readLastPcInc() & 0xff;
+                    if (this.pan === 127) this.pan = 128;
+                    this.debugLog("Pan: " + this.pan);
+                    this.sendMessage(false, MessageType.PanChange, this.pan);
+                    break;
+                }
+                case 0xC1: // Volume
+                {
+                    this.volume = this.readLastPcInc() & 0xff;
+                    this.sendMessage(false, MessageType.VolumeChange, this.volume);
+                    //this.debugLogForce("Volume: " + this.volume);
+                    break;
+                }
+                case 0xC2: // Master Volume
+                {
+                    this.masterVolume = this.readLastPcInc() & 0xff;
+                    this.debugLogForce("Master Volume: " + this.masterVolume);
+                    console.warn('UNIMPLEMENTED MASTER VOLUME');
+                    break;
+                }
+                case 0xC3: // Transpose
+                {
+                    this.transpose = this.readLastPcInc() << 24 >> 24;
+                    this.debugLog("Transpose: " + this.transpose);
+                    break;
+                }
+                case 0xC4: // Pitch Bend
+                {
+                    this.pitchBend = this.readLastPcInc() << 24 >> 24;
+                    this.debugLog("Pitch Bend: " + this.pitchBend);
+                    this.sendMessage(false, MessageType.PitchBend);
+                    break;
+                }
+                case 0xC5: // Pitch Bend Range
+                {
+                    this.pitchBendRange = this.readLastPcInc() & 0xff;
+                    this.debugLog("Pitch Bend Range: " + this.pitchBendRange);
+                    this.sendMessage(false, MessageType.PitchBend);
+                    break;
+                }
+                case 0xC6: // Track Priority
+                {
+                    this.priority = this.readLastPcInc() & 0xff;
+                    this.debugLog("Track Priority: " + this.priority);
+                    break;
+                }
+                case 0xC7: // Mono / Poly
+                {
+                    let param = this.readLastPcInc();
+                    this.mono = bitTest(param, 0);
+                    break;
+                }
+                case 0xC8: // Tie On / Off
+                {
+                    this.tie = bitTest(this.readLastPcInc(), 0);
+                    this.debugLog("Tie On / Off: " + this.tie);
+
+                    // Apparently when a tie command is reached, the track's currently playing channels immediately stop
+                    this.lastActiveChannel = null;
+                    for (let i in this.activeChannels) {
+                        var channel = this.activeChannels[i];
+                        channel.stopFlag = true;
+                    }
+
+                    break;
+                }
+                case 0xC9: // Portamento Control
+                {
+                    this.portamentoKey = (this.readLastPcInc() + this.transpose);
+                    if (this.portamentoKey < 0)
+                        this.portamentoKey = 0;
+                    else if (this.portamentoKey > 0x7f)
+                        this.portamentoKey = 0x7f;
+
+                    this.portamentoEnable = 1;
+                    this.debugLog("Portamento Control: " + this.portamentoKey);
+                    break;
+                }
+                case 0xCA: // LFO Depth
+                {
+                    this.lfoDepth = this.readLastPcInc() & 0xff;
+                    this.debugLog("LFO Depth: " + this.lfoDepth);
+                    break;
+                }
+                case 0xCB: // LFO Speed
+                {
+                    this.lfoSpeed = this.readLastPcInc() & 0xff;
+                    this.debugLog("LFO Speed: " + this.lfoSpeed);
+                    break;
+                }
+                case 0xCC: // LFO Type
+                {
+                    this.lfoType = this.readLastPcInc() & 0xff;
+                    this.debugLog("LFO Type: " + this.lfoType);
+                    if (this.lfoType !== LfoType.Volume) {
+                        console.warn("Unimplemented LFO type: " + this.lfoType);
+                    }
+                    break;
+                }
+                case 0xCD: // LFO Range
+                {
+                    this.lfoRange = this.readLastPcInc() & 0xff;
+                    this.debugLog("LFO Range: " + this.lfoRange);
+                    break;
+                }
+                case 0xCE: // Portamento On / Off
+                {
+                    this.portamentoEnable = this.readLastPcInc() & 0xff;
+                    this.debugLog("Portamento On / Off: " + this.portamentoEnable);
+                    break;
+                }
+                case 0xCF: // Portamento Time
+                {
+                    this.portamentoTime = this.readLastPcInc() & 0xff;
+                    this.debugLog("Portamento Time: " + this.portamentoTime);
                     break;
                 }
                 case 0xB0: // Set Variable
                 {
                     var index = this.readPcInc();
-                    this.sequence.writeVar(index, this.readPcInc(2) << 16 >> 16);
+                    this.sequence.writeVar(index, this.readLastPcInc(2) << 16 >> 16);
                     break;
                 }
                 case 0xB1: // Add Variable
                 {
                     var index = this.readPcInc();
-                    this.sequence.writeVar(index, this.sequence.readVar(index) + (this.readPcInc(2) << 16 >> 16));
+                    this.sequence.writeVar(index, this.sequence.readVar(index) + (this.readLastPcInc(2) << 16 >> 16));
                     break;
                 }
                 case 0xB2: // Subtract Variable
                 {
                     var index = this.readPcInc();
-                    this.sequence.writeVar(index, this.sequence.readVar(index) - (this.readPcInc(2) << 16 >> 16));
+                    this.sequence.writeVar(index, this.sequence.readVar(index) - (this.readLastPcInc(2) << 16 >> 16));
+                    break;
+                }
+                case 0xB8: // Compare Equal
+                {
+                    var index = this.readPcInc();
+                    this.conditionalFlag = this.sequence.readVar(index) === (this.readLastPcInc(2) << 16 >> 16);
+                    break;
+                }
+                case 0xBA: // Compare Greater Than
+                {
+                    var index = this.readPcInc();
+                    this.conditionalFlag = this.sequence.readVar(index) > (this.readLastPcInc(2) << 16 >> 16);
+                    break;
+                }
+                case 0xBC: // Compare Less Than
+                {
+                    var index = this.readPcInc();
+                    this.conditionalFlag = this.sequence.readVar(index) < (this.readLastPcInc(2) << 16 >> 16);
                     break;
                 }
                 case 0xE0: // LFO Delay
@@ -1715,40 +1723,16 @@ class SequenceTrack {
                     this.debugLog("LFO Delay: " + this.lfoDelay);
                     break;
                 }
+                case 0xE1: // BPM
+                {
+                    this.bpm = this.readPcInc(2);
+                    this.debugLog("BPM: " + this.bpm);
+                    break;
+                }
                 case 0xE3: // Sweep Pitch
                 {
                     this.sweepPitch = this.readPcInc(2) << 16 >> 16;
                     this.debugLog("Sweep Pitch: " + this.sweepPitch);
-                    break;
-                }
-                case 0xD4: // Loop Start
-                {
-                    //this.debugLogForce('Loop Start ' + this.pc);
-                    var count = this.readPcInc();
-                    this.pushLoop(this.pc, count);
-                    break;
-                }
-                case 0xD5: // Expression
-                {
-                    this.expression = this.readPcInc();
-                    this.debugLog("Expression: " + this.expression);
-                    break;
-                }
-                case 0xFC: // Loop End
-                {
-                    if (this.loopSp > 0) {
-                        this.pc = this.popLoop();
-                        //this.debugLogForce('Loop End, back to ' + this.pc);
-                    }
-                    break;
-                }
-                case 0xFF: // End of Track
-                {
-                    this.sequence.endTrack(this.id);
-                    this.sendMessage(false, MessageType.TrackEnded);
-                    // Set restingFor to non-zero since the controller checks it to stop executing
-                    this.restingFor = 1;
-                    this.debugLogForce("Track hit a FIN");
                     break;
                 }
                 case 0xD0: // Attack Rate
@@ -1775,6 +1759,53 @@ class SequenceTrack {
                     this.releaseRate = this.readPcInc();
                     break;
                 }
+                case 0xD4: // Loop Start
+                {
+                    //this.debugLogForce('Loop Start ' + this.pc);
+                    var count = this.readPcInc();
+                    this.pushLoop(this.pc, count);
+                    break;
+                }
+                case 0xD5: // Expression
+                {
+                    this.expression = this.readPcInc();
+                    this.debugLog("Expression: " + this.expression);
+                    break;
+                }
+                case 0xFC: // Loop End
+                {
+                    if (this.loopSp > 0) {
+                        this.pc = this.popLoop();
+                        //this.debugLogForce('Loop End, back to ' + this.pc);
+                    }
+                    break;
+                }
+                case 0xFD: // Return
+                {
+                    this.pc = this.pop();
+                    break;
+                }
+                case 0xFE: // Allocate track
+                {
+                    // This probably isn't important for emulation
+                    let alloced = this.readPcInc(2);
+
+                    for (let i = 0; i < 16; i++) {
+                        if (bitTest(alloced, i)) {
+                            this.debugLog("Allocated track " + i);
+                        }
+                    }
+                    break;
+                }
+                case 0xFF: // End of Track
+                {
+                    this.sequence.endTrack(this.id);
+                    this.sendMessage(false, MessageType.TrackEnded);
+                    // Set restingFor to non-zero since the controller checks it to stop executing
+                    this.restingFor = 1;
+                    this.debugLogForce("Track hit a FIN");
+                    break;
+                }
                 default:
                     console.error(`${this.id}: Unknown opcode: ` + hex(opcode, 2) + " PC: " + hex(this.pc - 1, 6));
             }
@@ -1782,12 +1813,62 @@ class SequenceTrack {
     }
 
     execute() {
-        this.isSubOpcode = false;
-
         let opcodePc = this.pc;
         let opcode = this.readPcInc();
 
         this.executeOpcode(opcode);
+        this.exeCommandFlag = true;
+    }
+
+    determineVariableLength(addr) {
+        let bytes = 0;
+        for (let i = 0; i < 4; i++) {
+            let val = this.read(addr);
+            addr++
+            bytes++;
+
+            if ((val & 0x80) === 0) {
+                break;
+            }
+        }
+
+        return bytes;
+    }
+
+    determineCommandLength(pc) {
+        let opcode = this.read(pc);
+
+        if (opcode <= 0x7f)
+            return 2 + this.determineVariableLength(pc + 2);
+        else {
+            switch (opcode & 0xf0) {
+                case 0x80: return 1 + this.determineVariableLength(pc + 1);
+                case 0x90:
+                {
+                    if (opcode === 0x93)        return 2 + this.determineVariableLength(pc + 2);
+                    else if (opcode <= 0x95)    return 4;
+                    else throw new Error();
+                }
+                case 0xA0:
+                {
+                    if (opcode === 0xA0)        return 6;
+                    else if (opcode === 0xA1)   return 3;
+                    else if (opcode === 0xA2)   return 2;
+                    else throw new Error();
+                } 
+                case 0xB0: return 4;
+                case 0xC0: return 2;
+                case 0xD0: return 2;
+                case 0xE0: return 3;
+                case 0xF0:
+                {
+                    if (opcode === 0xFF)        return 1;
+                    else if (opcode === 0xFE)   return 3;
+                    else if (opcode >= 0xFC)    return 1;
+                    else throw new Error();
+                } 
+            }
+        }
     }
 }
 
@@ -2686,7 +2767,11 @@ class Controller {
                             if (instrument.fRecord === InstrumentType.PsgPulse) {
                                 sample = squares[sampleId];
                                 sample.resampleMode = ResampleMode.NearestNeighbor;
-                            } else {
+                            }
+                            else if (instrument.fRecord === InstrumentType.PsgNoise) {
+                                console.warn('[UNIMPLEMENTED] PSG Noise Note');
+                            }
+                            else {
                                 sample.frequency = midiNoteToHz(instrument.noteNumber[index]);
                                 sample.resampleMode = ResampleMode.Cubic;
                             }
