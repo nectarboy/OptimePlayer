@@ -1208,10 +1208,10 @@ class Sequence {
         if (!this.paused) {
             for (let i = 0; i < 16; i++) {
                 if (this.tracks[i].active) {
-                    while (this.tracks[i].restingFor === 0 && !this.tracks[i].restUntilEndOfNote) {
+                    while (this.tracks[i].restingFor === 0 && !this.tracks[i].restingUntilAChannelEnds) {
                         this.tracks[i].execute();
                     }
-                    this.tracks[i].restingFor -= !this.tracks[i].restUntilEndOfNote;
+                    this.tracks[i].restingFor -= !this.tracks[i].restingUntilAChannelEnds;
                 }
 
                 // for (let index in this.tracks[i].activeChannels) {
@@ -1280,6 +1280,8 @@ class SequenceTrack {
         this.conditionalFlag = true;
         this.exeCommandFlag = true;
         this.paramOverride = ParamOverride.Null;
+        this.restingUntilAChannelEnds = false;
+        this.channelWaitingFor = null;
 
         this.active = false;
         this.activeChannels = [];
@@ -1315,7 +1317,6 @@ class SequenceTrack {
         this.sweepPitch = 0;
 
         this.restingFor = 0;
-        this.restUntilEndOfNote = false;
 
         this.stack = new Uint32Array(64);
         this.loopStack = new Uint32Array(64);
@@ -1463,11 +1464,12 @@ class SequenceTrack {
 
             if (this.mono) {
                 this.restingFor = duration;
+
                 if (duration === 0)
-                    this.restUntilEndOfNote = true;
+                    this.restingUntilAChannelEnds = true;
             }
 
-            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration, this.portamentoKey);
+            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration, {portamentoKey: this.portamentoKey, mono: this.mono}); // TODO: i dont like this random object. 
             this.portamentoKey = note;
         } else {
             switch (opcode) {
@@ -2631,7 +2633,6 @@ class Controller {
                     // @ts-ignore
                     indexToDelete = index;
                     this.synthesizers[entry.trackNum].cutInstrument(entry.synthInstrIndex);
-                    //this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
                 }
 
                 if (entry.stopFlag) {
@@ -2639,10 +2640,9 @@ class Controller {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
                         entry.adsrTimer = -92544;
-                        //this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
                     }
                 }
-                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !track.restUntilEndOfNote && !track.tie) {
+                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !entry.infiniteDuration && !track.tie) {
                     if (entry.adsrState !== AdsrState.Release) {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
@@ -2771,11 +2771,14 @@ class Controller {
             var track = this.sequence.tracks[note.trackNum];
             var indexToDeleteInTrackChannel = track.activeChannels.indexOf(note);
             if (indexToDeleteInTrackChannel !== -1) {
-                track.restUntilEndOfNote &&= !note.restUntilEndOfNote; //(track.activeChannels.length > 0);
                 if (track.lastActiveChannel === note)
                     track.lastActiveChannel = null;
 
                 track.activeChannels.splice(indexToDeleteInTrackChannel, 1);
+            }
+            if (track.restingUntilAChannelEnds && track.channelWaitingFor === note) {
+                track.restingUntilAChannelEnds = false;
+                track.channelWaitingFor = null;
             }
             this.activeNoteData.splice(indexToDelete, 1);
         }
@@ -2809,7 +2812,8 @@ class Controller {
                             let midiNote = msg.param0;
                             let velocity = msg.param1;
                             let duration = msg.param2;
-                            let portamentoKey = msg.param3;
+                            let portamentoKey = msg.param3.portamentoKey;
+                            let mono = msg.param3.mono;
 
                             if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
 
@@ -2928,7 +2932,7 @@ class Controller {
                                     synthInstrIndex: synthInstrIndex,
                                     startTime: this.sequence.ticksElapsed,
                                     endTime: this.sequence.ticksElapsed + duration,
-                                    restUntilEndOfNote: duration === 0 && track.mono,
+                                    infiniteDuration: duration === 0,
                                     instrument: instrument,
                                     instrumentEntryIndex: index,
                                     adsrState: AdsrState.Attack,
@@ -2941,6 +2945,10 @@ class Controller {
                                 this.activeNoteData.push(channel);
                                 track.activeChannels.push(channel);
                                 track.lastActiveChannel = channel;
+
+                                if (track.restingUntilAChannelEnds && channel.infiniteDuration && mono) {
+                                    track.channelWaitingFor = channel;
+                                }
                             }
 
                             var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - midiNote) << 6);
