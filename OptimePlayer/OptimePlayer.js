@@ -1178,11 +1178,13 @@ class Sequence {
     /** @param {DataView} sseqFile
      *  @param {number} dataOffset
      *  @param {CircularBuffer<Message>} messageBuffer
+     *  @param {Controller>} controller
      **/
-    constructor(sseqFile, dataOffset, messageBuffer) {
+    constructor(sseqFile, dataOffset, messageBuffer, controller) {
         this.sseqFile = sseqFile;
         this.dataOffset = dataOffset;
         this.messageBuffer = messageBuffer;
+        this.controller = controller;
 
         /** @type {SequenceTrack[]} */
         this.vars = new Int16Array(32);
@@ -1212,11 +1214,13 @@ class Sequence {
                     this.tracks[i].restingFor -= !this.tracks[i].restUntilEndOfNote;
                 }
 
-                for (let index in this.tracks[i].activeChannels) {
-                    var channel = this.tracks[i].activeChannels[index];
-                    if (!channel.autoSweep && channel.sweepCounter)
-                        channel.sweepCounter--;
-                }
+                // for (let index in this.tracks[i].activeChannels) {
+                //     var channel = this.tracks[i].activeChannels[index];
+                //     if (!channel.autoSweep && channel.sweepCounter) {
+                //         channel.sweepCounter--;
+                //         //this.controller.updateNoteFinetuneLfo(channel);
+                //     }
+                // }
             }
         }
 
@@ -1499,7 +1503,7 @@ class SequenceTrack {
                 case 0x94: // Jump
                 {
                     var from = this.pc;
-                    let dest = this.readPcInc(3);
+                    let dest = this.readLastPcInc(3);
                     this.pc = dest;
                     this.debugLogForce(`Jump from ${hexN(from, 6)} to: ${hexN(dest, 6)} Tick: ${this.sequence.ticksElapsed}`);
 
@@ -1508,7 +1512,7 @@ class SequenceTrack {
                 }
                 case 0x95: // Call
                 {
-                    let dest = this.readPcInc(3);
+                    let dest = this.readLastPcInc(3);
 
                     // Push the return address
                     this.push(this.pc);
@@ -2400,7 +2404,7 @@ class Controller {
 
         /** @type {CircularBuffer<Message>} */
         this.messageBuffer = new CircularBuffer(1024);
-        this.sequence = new Sequence(sseqFile, dataOffset, this.messageBuffer);
+        this.sequence = new Sequence(sseqFile, dataOffset, this.messageBuffer, this);
 
         /** @type {Uint8Array[]} */
         // this.notesOn = [];
@@ -2462,7 +2466,7 @@ class Controller {
 
         /** @type {CircularBuffer<Message>} */
         this.messageBuffer = new CircularBuffer(1024);
-        this.sequence = new Sequence(ssarFile, dataOffset, this.messageBuffer);
+        this.sequence = new Sequence(ssarFile, dataOffset, this.messageBuffer, this);
 
         let trackPCOffset = read32LE(ssarFile, ssarListOffs);
         this.sequence.tracks[0].pc = trackPCOffset;
@@ -2602,13 +2606,14 @@ class Controller {
         else {
             finetune = 0;
         }
-
         finetune += (this.sequence.tracks[note.trackNum].lfoType === LfoType.Pitch) * Number(this.lfoValue);
 
         instr.setFinetuneLfo((finetune) / 64);
     }
 
     tick() {
+        this.updateSequence(); // The order in which this is called actually has a noticable difference for some sounds (like the mini mushroom)
+
         let indexToDelete = -1;
 
         for (let index in this.activeNoteData) {
@@ -2618,6 +2623,7 @@ class Controller {
 
             let track = this.sequence.tracks[entry.trackNum];
             let instr = this.synthesizers[entry.trackNum].instrs[entry.synthInstrIndex];
+
             // sometimes a SampleInstrument will be reused before the note it is playing is over due to Synthesizer polyphony limits
             // check here to make sure the note entry stored in the heap is referring to the same note it originally did 
             if (instr.startTime === entry.startTime && instr.playing) {
@@ -2695,8 +2701,10 @@ class Controller {
                 // else {
                 //     finetune = 0;
                 // }
-                if (entry.sweepPitch && entry.sweepCounter && entry.autoSweep)
+                if (entry.sweepPitch && entry.sweepCounter && entry.autoSweep) {
+                    console.log(1);
                     entry.sweepCounter--;
+                }
 
                 if (entry.delayCounter < track.lfoDelay) {
                     entry.delayCounter++;
@@ -2711,21 +2719,8 @@ class Controller {
                     entry.lfoCounter &= 0xFF;
                     entry.lfoCounter |= tmp << 8;
 
-                    // if (this.lfoValue !== 0n) {
-                    //     switch (track.lfoType) {
-                    //         case LfoType.Pitch:
-                    //             // LFO value is in 1/64ths of a semitone
-                    //             finetune += Number(this.lfoValue);
-                    //             //instr.setFinetuneLfo(Number(lfoValue) / 64);
-                    //             break;
-                    //         default:
-                    //             break;
-                    //     }
-                    // }
-
                 }
 
-                //instr.setFinetuneLfo((finetune) / 64);
                 this.updateNoteFinetuneLfo(entry);
 
                 // all thanks to @ipatix at pret/pokediamond
@@ -2786,9 +2781,21 @@ class Controller {
             this.activeNoteData.splice(indexToDelete, 1);
         }
 
+        // this.updateSequence();
+    }
+
+    updateSequence() {
         this.bpmTimer += this.sequence.tracks[0].bpm;
         while (this.bpmTimer >= 240) {
             this.bpmTimer -= 240;
+
+            for (let note of this.activeNoteData) {
+                if (!note.autoSweep && note.sweepCounter) {
+                    note.sweepCounter--;
+                    //this.updateNoteFinetuneLfo(note);
+                }
+                this.updateNoteFinetuneLfo(note);
+            }
 
             this.sequence.tick();
 
@@ -2908,11 +2915,6 @@ class Controller {
                                 channel.midiNote = midiNote;
                                 channel.velocity = velocity;
                                 channel.endTime = this.sequence.ticksElapsed + duration;
-                                //lastNote.adsrState = AdsrState.Attack;
-                                //lastNote.adsrTimer = -92544; // idk why this number, ask gbatek
-                                // channel.lfoCounter = 0;
-                                // channel.lfoDelayCounter = 0;
-                                // channel.delayCounter = 0;
                             }
                             else {
                                 let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
@@ -2945,8 +2947,8 @@ class Controller {
                             var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - midiNote) << 6);
                             var sweepLength;
                             var autoSweep;
-                            if (this.portamentoTime) {
-                                sweepLength = (track.portamentoTime * track.portamentoTime * Math.abs(track.sweepPitch)) >> 11;
+                            if (track.portamentoTime) {
+                                sweepLength = (track.portamentoTime * track.portamentoTime * Math.abs(sweepPitch)) >> 11;
                                 autoSweep = true;
                             }
                             else {
