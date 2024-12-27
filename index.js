@@ -56,32 +56,38 @@ async function loadNdsRom(data) {
 
         if (sdat != null) {
             if (sdats.length > 1)
-                songPicker.insertAdjacentHTML("beforeend", '<h2>SDAT' + i + ':</h2>');
+                songPicker.insertAdjacentHTML("beforeend", '<h2>SDAT ' + i + ':</h2>');
 
             // Sequences
             songPicker.insertAdjacentHTML("beforeend", '<h3>Sequences:</h3>');
-            for (const [key, value] of sdat.sseqIdNameDict) {
-                    let button = document.createElement('button');
-                button.innerText = `${value} (ID: ${key})`;
+            for (const i of sdat.sseqList) {
+                let name = sdat.sseqIdNameDict.get(i);
+                let button = document.createElement('button');
+                    button.innerText = name ? `${name} (ID: ${i})` : `SSEQ_${i}`;
                     button.style.textAlign = 'left';
-                songPicker.appendChild(button);
                     button.onclick = () => {
-                            playSeq(sdat, value);
+                        playSeq(sdat, i);
                     };
+                songPicker.appendChild(button);
             }
 
             // Sequence Archives
-            for (const [key, value] of sdat.ssarIdNameDict) {
-                songPicker.insertAdjacentHTML("beforeend", '<h3>Sequence Archive ' + key + ' (' + value + '):</h3>');
+            for (const i of sdat.ssarList) {
+                let ssarName = sdat.ssarIdNameDict.get(i);
+                songPicker.insertAdjacentHTML("beforeend", ssarName ? '<h3>Sequence Archive ' + i + ' (' + ssarName + '):</h3>' : '<h3>Sequence Archive ' + i + ':</h3>');
+                let ssarSeqCount = read32LE(sdat.fat.get(sdat.ssarInfos[i].fileId), 28);
 
-                for (const [subKey, subValue] of sdat.ssarSseqSymbols[key].ssarSseqIdNameDict) {
-                        let button = document.createElement('button');
-                    button.innerText = `${subValue} (ID: ${subKey})`;
+                for (var ii = 0; ii < ssarSeqCount; ii++) {
+                    let sseqName = sdat.ssarSseqSymbols[i] ? sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.get(ii) : null;
+                    let button = document.createElement('button');
+                        button.innerText = sseqName ? `${sseqName} (ID: ${ii})` : `SSEQ_${ii}`;;
                         button.style.textAlign = 'left';
-                    songPicker.appendChild(button);
+                        let ssarId = i;
+                        let seqId = ii;
                         button.onclick = () => {
-                                playSsarSeq(sdat, value, subKey);
+                            playSsarSeq(sdat, ssarId, seqId);
                         };
+                    songPicker.appendChild(button);
                 }
             }
 
@@ -621,7 +627,7 @@ window.onload = async () => {
                             nextSseqListIndex = g_currentlyPlayingSdat.sseqList[currentSseqListIndex + 1];
                         }
                         if (nextSseqListIndex) {
-                            playSeqById(g_currentlyPlayingSdat, nextSseqListIndex);
+                            playSeq(g_currentlyPlayingSdat, nextSseqListIndex);
                         }
                         break;
                     default:
@@ -730,9 +736,9 @@ window.onload = async () => {
         restartSequenceButton.onclick = () => {
             pauseButton.innerText = "Pause Sequence Player";
             if (g_currentlyPlayingIsSsar)
-                playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingName, g_currentlyPlayingSubId);
+                playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, g_currentlyPlayingSubId);
             else
-                playSeq(g_currentlyPlayingSdat, g_currentlyPlayingName);
+                playSeq(g_currentlyPlayingSdat, g_currentlyPlayingId);
         };
     });
 

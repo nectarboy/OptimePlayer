@@ -502,6 +502,7 @@ class Sdat {
          * @type {number[]}
          */
         this.sseqList = [];
+        this.ssarList = [];
 
         /** @type {(SseqInfo | null)[]} */
         this.sseqInfos = [];
@@ -584,7 +585,7 @@ class Sdat {
 
         let symbOffs = read32LE(view, 0x10);
         let symbSize = read32LE(view, 0x14);
-        let noSymbBlock = symbOffs === 0 || symbSize === 0;
+        let sdatHasSymbBlock = symbOffs !== 0 && symbSize !== 0;
         let infoOffs = read32LE(view, 0x18);
         let infoSize = read32LE(view, 0x1C);
         let fatOffs = read32LE(view, 0x20);
@@ -623,106 +624,108 @@ class Sdat {
             return str;
         }
 
-        {
-            // SSEQ symbols
-            let symbSseqListOffs = read32LE(symbView, 0x8);
-            if (dataViewOutOfBounds(symbView, symbSseqListOffs)) {
-                console.log("SSEQ num entries pointer is out of bounds, rejecting SDAT.")
-                return;
-            }
-            let symbSseqListNumEntries = read32LE(symbView, symbSseqListOffs);
-
-            console.log("SYMB Bank List Offset: " + hexN(symbSseqListOffs, 8));
-            console.log("SYMB Number of SSEQ entries: " + symbSseqListNumEntries);
-
-            for (let i = 0; i < symbSseqListNumEntries; i++) {
-                let sseqNameOffs = read32LE(symbView, symbSseqListOffs + 4 + i * 4);
-
-                // for some reason games have a ton of empty symbols -- skip them
-                if (sseqNameOffs !== 0) {
-                    let seqName = readCString(symbView, sseqNameOffs);
-
-                    sdat.sseqNameIdDict.set(seqName, i);
-                    sdat.sseqIdNameDict.set(i, seqName);
+        if (sdatHasSymbBlock) {
+            {
+                // SSEQ symbols
+                let symbSseqListOffs = read32LE(symbView, 0x8);
+                if (dataViewOutOfBounds(symbView, symbSseqListOffs)) {
+                    console.log("SSEQ num entries pointer is out of bounds, rejecting SDAT.")
+                    return;
                 }
-            }
-        }
+                let symbSseqListNumEntries = read32LE(symbView, symbSseqListOffs);
 
-        {
-            // SSAR symbols
-            let symbSsarListOffs = read32LE(symbView, 0xC);
-            let symbSsarListNumEntries = read32LE(symbView, symbSsarListOffs);
+                console.log("SYMB Bank List Offset: " + hexN(symbSseqListOffs, 8));
+                console.log("SYMB Number of SSEQ entries: " + symbSseqListNumEntries);
 
-            console.log("SYMB Number of SSAR entries: " + symbSsarListNumEntries);
-
-            sdat.ssarSseqSymbols.length = 0;
-            for (let i = 0; i < symbSsarListNumEntries; i++) {
-                let ssarNameOffs = read32LE(symbView, symbSsarListOffs + i * 8 + 4);
-
-                // for some reason games have a ton of empty symbols -- skip them
-                if (ssarNameOffs !== 0) {
-                    let ssarName = readCString(symbView, ssarNameOffs);
-
-                    sdat.ssarNameIdDict.set(ssarName, i);
-                    sdat.ssarIdNameDict.set(i, ssarName);
-                }
-
-                // Sub-SSEQ symbols for this SSAR
-                let symbSsarSseqListOffs = read32LE(symbView, symbSsarListOffs + i*8 + 8);
-                let symbSsarSseqListNumEntries = read32LE(symbView, symbSsarSseqListOffs);
-                if (symbSsarSseqListNumEntries) {
-                    sdat.ssarSseqSymbols[i] = {
-                        ssarSseqNameIdDict: new Map(),
-                        ssarSseqIdNameDict: new Map()
-                    };
-                }
-                else {
-                    sdat.ssarSseqSymbols[i] = null;
-                }
-                //console.log("SYMB Number of Sub-SSEQ entries for SSAR_" + i + ": " + symbSsarSseqListNumEntries);
-
-                for (let ii = 0; ii < symbSsarSseqListNumEntries; ii++) {
-                    let ssarSseqNameOffs = read32LE(symbView, symbSsarSseqListOffs + 4 + ii*4);
+                for (let i = 0; i < symbSseqListNumEntries; i++) {
+                    let sseqNameOffs = read32LE(symbView, symbSseqListOffs + 4 + i * 4);
 
                     // for some reason games have a ton of empty symbols -- skip them
-                    if (ssarSseqNameOffs !== 0) {
-                        let ssarSeqName = readCString(symbView, ssarSseqNameOffs);
+                    if (sseqNameOffs !== 0) {
+                        let seqName = readCString(symbView, sseqNameOffs);
 
-                        sdat.ssarSseqSymbols[i].ssarSseqNameIdDict.set(ssarSeqName, ii);
-                        sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.set(ii, ssarSeqName);
+                        sdat.sseqNameIdDict.set(seqName, i);
+                        sdat.sseqIdNameDict.set(i, seqName);
                     }
                 }
             }
-        }
 
-        {
-            // BANK symbols
-            let symbBankListOffs = read32LE(symbView, 0x10);
-            let symbBankListNumEntries = read32LE(symbView, symbBankListOffs);
+            {
+                // SSAR symbols
+                let symbSsarListOffs = read32LE(symbView, 0xC);
+                let symbSsarListNumEntries = read32LE(symbView, symbSsarListOffs);
 
-            console.log("SYMB Bank List Offset: " + hexN(symbBankListOffs, 8));
-            console.log("SYMB Number of BANK entries: " + symbBankListNumEntries);
+                console.log("SYMB Number of SSAR entries: " + symbSsarListNumEntries);
 
-            for (let i = 0; i < symbBankListNumEntries; i++) {
-                let bankNameOffs = read32LE(symbView, symbBankListOffs + 4 + i * 4);
-                if (i === 0) console.log("NDS file addr of BANK list 1st entry: " + hexN(view.byteOffset + symbOffs + bankNameOffs, 8));
+                sdat.ssarSseqSymbols.length = 0;
+                for (let i = 0; i < symbSsarListNumEntries; i++) {
+                    let ssarNameOffs = read32LE(symbView, symbSsarListOffs + i * 8 + 4);
 
-                // for some reason games have a ton of empty symbols -- skip them
-                if (bankNameOffs !== 0) {
-                    let bankName = readCString(symbView, bankNameOffs);
+                    // for some reason games have a ton of empty symbols -- skip them
+                    if (ssarNameOffs !== 0) {
+                        let ssarName = readCString(symbView, ssarNameOffs);
 
-                    sdat.sbnkNameIdDict.set(bankName, i);
-                    sdat.sbnkIdNameDict.set(i, bankName);
+                        sdat.ssarNameIdDict.set(ssarName, i);
+                        sdat.ssarIdNameDict.set(i, ssarName);
+                    }
+
+                    // Sub-SSEQ symbols for this SSAR
+                    let symbSsarSseqListOffs = read32LE(symbView, symbSsarListOffs + i*8 + 8);
+                    let symbSsarSseqListNumEntries = read32LE(symbView, symbSsarSseqListOffs);
+                    if (symbSsarSseqListNumEntries) {
+                        sdat.ssarSseqSymbols[i] = {
+                            ssarSseqNameIdDict: new Map(),
+                            ssarSseqIdNameDict: new Map()
+                        };
+                    }
+                    else {
+                        sdat.ssarSseqSymbols[i] = null;
+                    }
+                    //console.log("SYMB Number of Sub-SSEQ entries for SSAR_" + i + ": " + symbSsarSseqListNumEntries);
+
+                    for (let ii = 0; ii < symbSsarSseqListNumEntries; ii++) {
+                        let ssarSseqNameOffs = read32LE(symbView, symbSsarSseqListOffs + 4 + ii*4);
+
+                        // for some reason games have a ton of empty symbols -- skip them
+                        if (ssarSseqNameOffs !== 0) {
+                            let ssarSeqName = readCString(symbView, ssarSseqNameOffs);
+
+                            sdat.ssarSseqSymbols[i].ssarSseqNameIdDict.set(ssarSeqName, ii);
+                            sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.set(ii, ssarSeqName);
+                        }
+                    }
                 }
             }
-        }
 
-        {
-            // SWAR symbols (TODO)
-            let symbSwarListOffs = read32LE(symbView, 0x14);
-            let symbSwarListNumEntries = read32LE(symbView, symbSwarListOffs);
+            {
+                // BANK symbols
+                let symbBankListOffs = read32LE(symbView, 0x10);
+                let symbBankListNumEntries = read32LE(symbView, symbBankListOffs);
 
-            console.log("SYMB Number of SWAR entries: " + symbSwarListNumEntries);
+                console.log("SYMB Bank List Offset: " + hexN(symbBankListOffs, 8));
+                console.log("SYMB Number of BANK entries: " + symbBankListNumEntries);
+
+                for (let i = 0; i < symbBankListNumEntries; i++) {
+                    let bankNameOffs = read32LE(symbView, symbBankListOffs + 4 + i * 4);
+                    if (i === 0) console.log("NDS file addr of BANK list 1st entry: " + hexN(view.byteOffset + symbOffs + bankNameOffs, 8));
+
+                    // for some reason games have a ton of empty symbols -- skip them
+                    if (bankNameOffs !== 0) {
+                        let bankName = readCString(symbView, bankNameOffs);
+
+                        sdat.sbnkNameIdDict.set(bankName, i);
+                        sdat.sbnkIdNameDict.set(i, bankName);
+                    }
+                }
+            }
+
+            {
+                // SWAR symbols (TODO)
+                let symbSwarListOffs = read32LE(symbView, 0x14);
+                let symbSwarListNumEntries = read32LE(symbView, symbSwarListOffs);
+
+                console.log("SYMB Number of SWAR entries: " + symbSwarListNumEntries);
+            }
         }
 
         // INFO processing
@@ -766,6 +769,7 @@ class Sdat {
                     info.fileId = read16LE(infoView, infoSsarNameOffs + 0);
 
                     sdat.ssarInfos[i] = info;
+                    sdat.ssarList.push(i);
                 } else {
                     sdat.ssarInfos[i] = null;
                 }
@@ -1085,6 +1089,7 @@ class InstrumentRecord {
             case InstrumentType.Drumset:
                 if (note < this.lowerNote || note > this.upperNote) {
                     console.warn(`resolveEntryIndex: drumset note out of range (${this.lowerNote}-${this.upperNote} inclusive): ${note}`);
+                    return -1;
                 }
                 return note - this.lowerNote;
 
@@ -1094,7 +1099,7 @@ class InstrumentRecord {
                 }
                 return 7;
             default:
-                throw new Error();
+                throw new Error(`Invalid fRecord: ${this.fRecord}`);
         }
     }
 }
@@ -1503,7 +1508,7 @@ class SequenceTrack {
                 }
                 case 0x81: // Set bank and program
                 {
-                    let bankAndProgram = this.readVariableLength();
+                    let bankAndProgram = this.readLastVariableLength();
                     this.program = bankAndProgram & 0x7F;
                     this.bank = (bankAndProgram >> 7) & 0x7F;
 
@@ -1699,10 +1704,23 @@ class SequenceTrack {
                     this.sequence.writeVar(index, this.sequence.readVar(index) - (this.readLastPcInc(2) << 16 >> 16));
                     break;
                 }
+                case 0xB6: // Random Variable
+                {
+                    var index = this.readPcInc();
+                    var max = this.readLastPcInc(2) << 16 >> 16;
+                    this.sequence.writeVar(index, Math.round(Math.random() * max));
+                    break;
+                }
                 case 0xB8: // Compare Equal
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) === (this.readLastPcInc(2) << 16 >> 16);
+                    break;
+                }
+                case 0xB9: // Compare Greater Than Or Equal To
+                {
+                    var index = this.readPcInc();
+                    this.conditionalFlag = this.sequence.readVar(index) >= (this.readLastPcInc(2) << 16 >> 16);
                     break;
                 }
                 case 0xBA: // Compare Greater Than
@@ -1711,10 +1729,22 @@ class SequenceTrack {
                     this.conditionalFlag = this.sequence.readVar(index) > (this.readLastPcInc(2) << 16 >> 16);
                     break;
                 }
+                case 0xBB: // Compare Less Than Or Equal To
+                {
+                    var index = this.readPcInc();
+                    this.conditionalFlag = this.sequence.readVar(index) <= (this.readLastPcInc(2) << 16 >> 16);
+                    break;
+                }
                 case 0xBC: // Compare Less Than
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) < (this.readLastPcInc(2) << 16 >> 16);
+                    break;
+                }
+                case 0xBD: // Compare Not Equal
+                {
+                    var index = this.readPcInc();
+                    this.conditionalFlag = this.sequence.readVar(index) !== (this.readLastPcInc(2) << 16 >> 16);
                     break;
                 }
                 case 0xE0: // LFO Delay
@@ -1774,7 +1804,7 @@ class SequenceTrack {
                 }
                 case 0xFC: // Loop End
                 {
-                    if (this.loopSp > 0) {
+                    if (this.loopSp !== 0) {
                         this.pc = this.popLoop();
                         //this.debugLogForce('Loop End, back to ' + this.pc);
                     }
@@ -1782,7 +1812,8 @@ class SequenceTrack {
                 }
                 case 0xFD: // Return
                 {
-                    this.pc = this.pop();
+                    if (this.sp !== 0)
+                        this.pc = this.pop();
                     break;
                 }
                 case 0xFE: // Allocate track
@@ -1838,8 +1869,9 @@ class SequenceTrack {
     determineCommandLength(pc) {
         let opcode = this.read(pc);
 
-        if (opcode <= 0x7f)
+        if (opcode <= 0x7f) {
             return 2 + this.determineVariableLength(pc + 2);
+        }
         else {
             switch (opcode & 0xf0) {
                 case 0x80: return 1 + this.determineVariableLength(pc + 1);
@@ -2756,7 +2788,13 @@ class Controller {
                             let track = this.sequence.tracks[msg.trackNum];
                             let instrument = this.instrumentBank.instruments[track.program];
 
+                            // Null note
+                            if (instrument.fRecord === 0)
+                                break;
+
                             let index = instrument.resolveEntryIndex(midiNote);
+                            if (index === -1)
+                                break;
                             let archiveIndex = instrument.swarInfoId[index];
                             let sampleId = instrument.swavInfoId[index];
 
@@ -2959,11 +2997,10 @@ function playController(player, controller, fsVisController) {
 
 /**
  * @param {Sdat} sdat
- * @param {string} name
+ * @param {number} id
  */
-async function playSeq(sdat, name) {
+async function playSeq(sdat, id) {
     g_currentlyPlayingSdat = sdat;
-    g_currentlyPlayingName = name;
     if (g_currentController) {
         await g_currentPlayer?.ctx.close();
     }
@@ -2973,8 +3010,6 @@ async function playSeq(sdat, name) {
     g_currentPlayer = player;
     const SAMPLE_RATE = player.sampleRate;
     console.log("Playing with sample rate: " + SAMPLE_RATE);
-
-    let id = sdat.sseqNameIdDict.get(name);
 
     g_currentlyPlayingId = id;
     g_currentlyPlayingIsSsar = false;
@@ -2991,20 +3026,20 @@ async function playSeq(sdat, name) {
 
 /**
  * @param {Sdat} sdat
- * @param {number} id
+ * @param {string} name
  */
-async function playSeqById(sdat, id) {
-    await playSeq(sdat, sdat.sseqIdNameDict.get(id));
+async function playSeqByName(sdat, name) {
+    await playSeq(sdat, sdat.sseqNameIdDict.get(name));
+    g_currentlyPlayingName = name;
 }
 
 /**
  * @param {Sdat} sdat
- * @param {string} ssarName
+ * @param {number} ssarId
  * @param {number} seqId
  */
-async function playSsarSeq(sdat, ssarName, seqId) {
+async function playSsarSeq(sdat, ssarId, seqId) {
     g_currentlyPlayingSdat = sdat;
-    g_currentlyPlayingName = ssarName;
     if (g_currentController) {
         await g_currentPlayer?.ctx.close();
     }
@@ -3014,8 +3049,6 @@ async function playSsarSeq(sdat, ssarName, seqId) {
     g_currentPlayer = player;
     const SAMPLE_RATE = player.sampleRate;
     console.log("Playing with sample rate: " + SAMPLE_RATE);
-
-    let ssarId = sdat.ssarNameIdDict.get(ssarName);
 
     g_currentlyPlayingId = ssarId;
     g_currentlyPlayingSubId = seqId;
@@ -3029,6 +3062,17 @@ async function playSsarSeq(sdat, ssarName, seqId) {
     currentFsVisController = fsVisController;
 
     playController(player, controller, null);
+}
+
+/**
+ * @param {Sdat} sdat
+ * @param {string} name
+ */
+async function playSsarSeqByName(sdat, ssarName, seqName) {
+    let id = sdat.ssarNameIdDict.get(name);
+    let seqId = sdat.ssarSseqSymbols[id].ssarSseqNameIdDict(seqName);
+    await playSsarSeq(sdat, id, seqId);
+    g_currentlyPlayingName = seqName;
 }
 
 /**
