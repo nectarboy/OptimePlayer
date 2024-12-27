@@ -855,40 +855,6 @@ class Sdat {
                     instrument.fRecord = fRecord;
 
                     /**
-                     * Thanks to ipatix and pret/pokediamond
-                     * @param {number} vol
-                     */
-                    function CalcDecayCoeff(vol) {
-                        if (vol === 127)
-                            return 0xFFFF;
-                        else if (vol === 126)
-                            return 0x3C00;
-                        else if (vol < 50)
-                            return (vol * 2 + 1) & 0xFFFF;
-                        else
-                            return (Math.floor(0x1E00 / (126 - vol))) & 0xFFFF;
-                    }
-
-                    /**
-                     * @param {number} attack
-                     * Thanks to ipatix and pret/pokediamond
-                     */
-                    function getEffectiveAttack(attack) {
-                        if (attack < 109)
-                            return 255 - attack;
-                        else
-                            return sAttackCoeffTable[127 - attack];
-                    }
-
-                    /**
-                     * Thanks to ipatix and pret/pokediamond
-                     * @param {number} sustain
-                     */
-                    function getSustainLevel(sustain) {
-                        return SNDi_DecibelSquareTable[sustain] << 7;
-                    }
-
-                    /**
                      * @param {number} index
                      * @param {number} offset
                      */
@@ -977,13 +943,14 @@ class Message {
      * @param {number} param1
      * @param {number} param2
      */
-    constructor(fromKeyboard, channel, type, param0, param1, param2) {
+    constructor(fromKeyboard, channel, type, param0, param1, param2, param3) {
         this.fromKeyboard = fromKeyboard;
         this.trackNum = channel;
         this.type = type;
         this.param0 = param0;
         this.param1 = param1;
         this.param2 = param2;
+        this.param3 = param3;
         this.timestamp = 0;
     }
 }
@@ -1319,6 +1286,7 @@ class SequenceTrack {
         this.pan = 64;
         this.mono = true;
         this.volume = 0x7f; // TODO: does the synthesizer need to be updated accordingly ?
+        this.expression = 0x7f;
         this.priority = 0;
         this.program = 0;
         this.bank = 0;
@@ -1333,8 +1301,6 @@ class SequenceTrack {
 
         this.pitchBend = 0;
         this.pitchBendRange = 2;
-
-        this.expression = 0;
 
         this.tie = false;
 
@@ -1472,8 +1438,8 @@ class SequenceTrack {
      * @param {number} param1
      * @param {number} param2
      */
-    sendMessage(fromKeyboard, type, param0 = 0, param1 = 0, param2 = 0) {
-        this.sequence.messageBuffer.insert(new Message(fromKeyboard, this.id, type, param0, param1, param2));
+    sendMessage(fromKeyboard, type, param0 = 0, param1 = 0, param2 = 0, param3 = 0) {
+        this.sequence.messageBuffer.insert(new Message(fromKeyboard, this.id, type, param0, param1, param2, param3));
     }
 
     executeOpcode(opcode) {
@@ -1497,7 +1463,8 @@ class SequenceTrack {
                     this.restUntilEndOfNote = true;
             }
 
-            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration);
+            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration, this.portamentoKey);
+            this.portamentoKey = note;
         } else {
             switch (opcode) {
                 case 0x80: // Rest
@@ -1578,8 +1545,10 @@ class SequenceTrack {
                 case 0xC1: // Volume
                 {
                     this.volume = this.readLastPcInc() & 0xff;
-                    this.sendMessage(false, MessageType.VolumeChange, this.volume);
-                    //this.debugLogForce("Volume: " + this.volume);
+                    if (this.volume > 0x7f)
+                        this.volume = 0x7f;
+                    this.sendMessage(false, MessageType.VolumeChange, this.volume, this.expression);
+                    this.debugLog("Volume: " + this.volume);
                     break;
                 }
                 case 0xC2: // Master Volume
@@ -1715,47 +1684,53 @@ class SequenceTrack {
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) === (this.readLastPcInc(2) << 16 >> 16);
+                    this.debugLogForce("Equal To: " + this.conditionalFlag);
                     break;
                 }
                 case 0xB9: // Compare Greater Than Or Equal To
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) >= (this.readLastPcInc(2) << 16 >> 16);
+                    this.debugLogForce("Greater Than Or Equal To: " + this.conditionalFlag);
                     break;
                 }
                 case 0xBA: // Compare Greater Than
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) > (this.readLastPcInc(2) << 16 >> 16);
+                    this.debugLogForce("Greater Than: " + this.conditionalFlag);
                     break;
                 }
                 case 0xBB: // Compare Less Than Or Equal To
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) <= (this.readLastPcInc(2) << 16 >> 16);
+                    this.debugLogForce("Less Than Or Equal To: " + this.conditionalFlag);
                     break;
                 }
                 case 0xBC: // Compare Less Than
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) < (this.readLastPcInc(2) << 16 >> 16);
+                    this.debugLogForce("Less Than: " + this.conditionalFlag);
                     break;
                 }
                 case 0xBD: // Compare Not Equal
                 {
                     var index = this.readPcInc();
                     this.conditionalFlag = this.sequence.readVar(index) !== (this.readLastPcInc(2) << 16 >> 16);
+                    this.debugLogForce("Not Equal: " + this.conditionalFlag);
                     break;
                 }
                 case 0xE0: // LFO Delay
                 {
-                    this.lfoDelay = this.readLastPcInc(2);
+                    this.lfoDelay = this.readLastPcInc(2) >>> 0;
                     this.debugLog("LFO Delay: " + this.lfoDelay);
                     break;
                 }
                 case 0xE1: // BPM
                 {
-                    this.bpm = this.readLastPcInc(2);
+                    this.bpm = this.readLastPcInc(2) >>> 0;
                     this.debugLog("BPM: " + this.bpm);
                     break;
                 }
@@ -1768,44 +1743,55 @@ class SequenceTrack {
                 case 0xD0: // Attack Rate
                 {
                     console.warn("[WARN TODO] Attack rate set by sequence");
-                    this.attackRate = this.readPcInc();
+                    this.attackRate = this.readLastPcInc() & 0xff;
                     break;
                 }
                 case 0xD1: // Decay Rate
                 {
                     console.warn("[WARN TODO] Decay rate set by sequence");
-                    this.decayRate = this.readPcInc();
+                    this.decayRate = this.readLastPcInc() & 0xff;
                     break;
                 }
                 case 0xD2: // Sustain Rate
                 {
                     console.warn("[WARN TODO] Sustain rate set by sequence");
-                    this.sustainRate = this.readPcInc();
+                    this.sustainRate = this.readLastPcInc() & 0xff;
                     break;
                 }
                 case 0xD3: // Release Rate
                 {
                     console.warn("[WARN TODO] Release rate set by sequence");
-                    this.releaseRate = this.readPcInc();
+                    this.releaseRate = this.readLastPcInc() & 0xff;
                     break;
                 }
                 case 0xD4: // Loop Start
                 {
                     //this.debugLogForce('Loop Start ' + this.pc);
-                    var count = this.readPcInc();
+                    var count = this.readLastPcInc() & 0xff;
                     this.pushLoop(this.pc, count);
                     break;
                 }
                 case 0xD5: // Expression
                 {
-                    this.expression = this.readPcInc();
+                    this.expression = this.readLastPcInc() & 0xff;
+                    if (this.expression > 0x7f)
+                        this.expression = 0x7f;
+                    this.sendMessage(false, MessageType.VolumeChange, this.volume, this.expression);
                     this.debugLog("Expression: " + this.expression);
                     break;
                 }
                 case 0xFC: // Loop End
                 {
                     if (this.loopSp !== 0) {
-                        this.pc = this.popLoop();
+                        var i = this.loopSp - 1;
+                        if (this.loopStackCount[i]) {
+                            this.loopStackCount[i]--;
+                            if (this.loopStackCount[i] === 0) {
+                                this.loopSp--;
+                                break;
+                            }
+                        }
+                        this.pc = this.loopStack[i];
                         //this.debugLogForce('Loop End, back to ' + this.pc);
                     }
                     break;
@@ -1835,6 +1821,8 @@ class SequenceTrack {
                     // Set restingFor to non-zero since the controller checks it to stop executing
                     this.restingFor = 1;
                     this.debugLogForce("Track hit a FIN");
+
+                    // "When the sequence processes for all tracks end, the player processes also stop"
                     break;
                 }
                 default:
@@ -2204,6 +2192,40 @@ function calcChannelVolume(velocity, adsrTimer) {
         result /= 1;
 
     return result / 127;
+}
+
+/**
+ * Thanks to ipatix and pret/pokediamond
+ * @param {number} vol
+ */
+function CalcDecayCoeff(vol) {
+    if (vol === 127)
+        return 0xFFFF;
+    else if (vol === 126)
+        return 0x3C00;
+    else if (vol < 50)
+        return (vol * 2 + 1) & 0xFFFF;
+    else
+        return (Math.floor(0x1E00 / (126 - vol))) & 0xFFFF;
+}
+
+/**
+ * @param {number} attack
+ * Thanks to ipatix and pret/pokediamond
+ */
+function getEffectiveAttack(attack) {
+    if (attack < 109)
+        return 255 - attack;
+    else
+        return sAttackCoeffTable[127 - attack];
+}
+
+/**
+ * Thanks to ipatix and pret/pokediamond
+ * @param {number} sustain
+ */
+function getSustainLevel(sustain) {
+    return SNDi_DecibelSquareTable[sustain] << 7;
 }
 
 class FsVisController {
@@ -2594,6 +2616,7 @@ class Controller {
             /** @type {InstrumentRecord} */
             let instrument = entry.instrument;
 
+            let track = this.sequence.tracks[entry.trackNum];
             let instr = this.synthesizers[entry.trackNum].instrs[entry.synthInstrIndex];
             // sometimes a SampleInstrument will be reused before the note it is playing is over due to Synthesizer polyphony limits
             // check here to make sure the note entry stored in the heap is referring to the same note it originally did 
@@ -2614,7 +2637,7 @@ class Controller {
                         //this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
                     }
                 }
-                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !this.sequence.tracks[entry.trackNum].restUntilEndOfNote) {
+                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !track.restUntilEndOfNote && !track.tie) {
                     if (entry.adsrState !== AdsrState.Release) {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
@@ -2622,7 +2645,6 @@ class Controller {
                 }
 
                 // LFO code based off pret/pokediamond
-                let track = this.sequence.tracks[entry.trackNum];
                 if (track.lfoDepth === 0) {
                     this.lfoValue = BigInt(0);
                 } else if (entry.lfoDelayCounter++ < track.lfoDelay) {
@@ -2709,7 +2731,7 @@ class Controller {
                 // all thanks to @ipatix at pret/pokediamond
                 switch (entry.adsrState) {
                     case AdsrState.Attack:
-                        entry.adsrTimer = -((-instrument.attackCoefficient[entry.instrumentEntryIndex] * entry.adsrTimer) >> 8);
+                        entry.adsrTimer = -((-entry.attackCoefficient * entry.adsrTimer) >> 8);
                         // console.log(data.adsrTimer);
                         instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
                         // one instrument hits full volume, start decay
@@ -2718,11 +2740,11 @@ class Controller {
                         }
                         break;
                     case AdsrState.Decay:
-                        entry.adsrTimer -= instrument.decayCoefficient[entry.instrumentEntryIndex];
+                        entry.adsrTimer -= entry.decayCoefficient;
                         // when instrument decays to sustain volume, go into sustain state
 
-                        if (entry.adsrTimer <= instrument.sustainLevel[entry.instrumentEntryIndex]) {
-                            entry.adsrTimer = instrument.sustainLevel[entry.instrumentEntryIndex];
+                        if (entry.adsrTimer <= entry.sustainLevel) {
+                            entry.adsrTimer = entry.sustainLevel;
                             entry.adsrState = AdsrState.Sustain;
                         }
 
@@ -2738,7 +2760,7 @@ class Controller {
                             indexToDelete = index;
                             this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         } else {
-                            entry.adsrTimer -= instrument.releaseCoefficient[entry.instrumentEntryIndex];
+                            entry.adsrTimer -= entry.releaseCoefficient;
                             instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
                         }
                         break;
@@ -2755,10 +2777,11 @@ class Controller {
             var track = this.sequence.tracks[note.trackNum];
             var indexToDeleteInTrackChannel = track.activeChannels.indexOf(note);
             if (indexToDeleteInTrackChannel !== -1) {
-                track.activeChannels.splice(indexToDeleteInTrackChannel, 1);
-                track.restUntilEndOfNote &&= (track.activeChannels.length > 0);
+                track.restUntilEndOfNote &&= !note.restUntilEndOfNote; //(track.activeChannels.length > 0);
                 if (track.lastActiveChannel === note)
                     track.lastActiveChannel = null;
+
+                track.activeChannels.splice(indexToDeleteInTrackChannel, 1);
             }
             this.activeNoteData.splice(indexToDelete, 1);
         }
@@ -2780,6 +2803,7 @@ class Controller {
                             let midiNote = msg.param0;
                             let velocity = msg.param1;
                             let duration = msg.param2;
+                            let portamentoKey = msg.param3;
 
                             if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
 
@@ -2812,8 +2836,46 @@ class Controller {
                                 console.warn('[UNIMPLEMENTED] PSG Noise Note');
                             }
                             else {
-                                sample.frequency = midiNoteToHz(instrument.noteNumber[index]);
+                                sample.frequency = midiNoteToHz(instrument.noteNumber[0]); // TODO: Is this property really needed ..?
+                                midiNote += instrument.noteNumber[0] - instrument.noteNumber[index]; // For multi-sample instruments
                                 sample.resampleMode = ResampleMode.Cubic;
+                            }
+
+                            let attackRate, attackCoefficient, decayRate, decayCoefficient, sustainRate, sustainLevel, releaseRate, releaseCoefficient;
+                            if (track.attackRate !== 0xff) {
+                                attackRate = track.attackRate;
+                                attackCoefficient = getEffectiveAttack(attackRate);
+                            }
+                            else {
+                                attackRate = instrument.attack[index];
+                                attackCoefficient = instrument.attackCoefficient[index];
+                            }
+
+                            if (track.decayRate !== 0xff) {
+                                decayRate = track.decayRate;
+                                decayCoefficient = CalcDecayCoeff(decayRate);
+                            }
+                            else {
+                                decayRate = instrument.decay[index];
+                                decayCoefficient = instrument.decayCoefficient[index];
+                            }
+
+                            if (track.sustainRate !== 0xff) {
+                                sustainRate = track.sustainRate;
+                                sustainLevel = getSustainLevel(sustainRate);
+                            }
+                            else {
+                                sustainRate = instrument.sustain[index];
+                                sustainLevel = instrument.sustainLevel[index];
+                            }
+                            
+                            if (track.releaseRate !== 0xff) {
+                                releaseRate = track.releaseRate;
+                                releaseCoefficient = CalcDecayCoeff(releaseRate);
+                            }
+                            else {
+                                releaseRate = instrument.release[index];
+                                releaseCoefficient = instrument.releaseCoefficient[index];
                             }
 
                             if (g_debug) {
@@ -2826,15 +2888,15 @@ class Controller {
                                     console.log("PSG Pulse");
                                 }
 
-                                console.log("Attack: " + instrument.attack[index]);
-                                console.log("Decay: " + instrument.decay[index]);
-                                console.log("Sustain: " + instrument.sustain[index]);
-                                console.log("Release: " + instrument.release[index]);
+                                console.log("Attack: " + releaseRate);
+                                console.log("Decay: " + decayRate);
+                                console.log("Sustain: " + sustainRate);
+                                console.log("Release: " + releaseRate);
 
-                                console.log("Attack Coefficient: " + instrument.attackCoefficient[index]);
-                                console.log("Decay Coefficient: " + instrument.decayCoefficient[index]);
-                                console.log("Sustain Level: " + instrument.sustainLevel[index]);
-                                console.log("Release Coefficient: " + instrument.releaseCoefficient[index]);
+                                console.log("Attack Coefficient: " + attackCoefficient);
+                                console.log("Decay Coefficient: " + decayCoefficient);
+                                console.log("Sustain Level: " + sustainLevel);
+                                console.log("Release Coefficient: " + releaseCoefficient);
                             }
 
                             var channel = null;
@@ -2865,6 +2927,7 @@ class Controller {
                                     synthInstrIndex: synthInstrIndex,
                                     startTime: this.sequence.ticksElapsed,
                                     endTime: this.sequence.ticksElapsed + duration,
+                                    restUntilEndOfNote: duration === 0 && track.mono,
                                     instrument: instrument,
                                     instrumentEntryIndex: index,
                                     adsrState: AdsrState.Attack,
@@ -2879,8 +2942,7 @@ class Controller {
                                 track.lastActiveChannel = channel;
                             }
 
-                            var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((track.portamentoKey - midiNote) << 6);
-                            track.portamentoKey = midiNote;
+                            var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - midiNote) << 6);
                             var sweepLength;
                             var autoSweep;
                             if (this.portamentoTime) {
@@ -2897,6 +2959,11 @@ class Controller {
                             channel.sweepLength = sweepLength;
                             channel.autoSweep = autoSweep;
                             this.updateNoteFinetuneLfo(channel);
+
+                            channel.attackCoefficient = attackCoefficient;
+                            channel.decayCoefficient = decayCoefficient;
+                            channel.sustainLevel = sustainLevel;
+                            channel.releaseCoefficient = releaseCoefficient;
                         }
                         break;
                     case MessageType.Jump: {
@@ -2909,15 +2976,21 @@ class Controller {
                             if (this.sequence.tracks[i].active) {
                                 tracksActive++;
                             }
+                            // else if (!this.sequence.tracks[i].restUntilEndOfNote) {
+                            //     for (note of this.sequence.tracks[i].activeChannels)
+                            //         note.stopFlag = true; 
+                            // }
                         }
 
                         if (tracksActive === 0) {
                             this.fadingStart = true;
+                            // for (note of this.activeNoteData)
+                            //     note.stopFlag = true;
                         }
                         break;
                     }
                     case MessageType.VolumeChange: {
-                        this.synthesizers[msg.trackNum].volume = (msg.param0 / 127) ** 2;
+                        this.synthesizers[msg.trackNum].volume = ((msg.param0 / 127) ** 2) * ((msg.param1 / 127) ** 2);
                         break;
                     }
                     case MessageType.PanChange: {
