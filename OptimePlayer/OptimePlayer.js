@@ -1479,10 +1479,9 @@ class SequenceTrack {
                 }
                 case 0x81: // Set bank and program
                 {
-                    let bankAndProgram = this.readLastVariableLength();
-                    this.program = bankAndProgram & 0x7F;
-                    this.bank = (bankAndProgram >> 7) & 0x7F;
-
+                    let bankAndProgram = this.readLastVariableLength() >>> 0;
+                    this.program = bankAndProgram & 0xFF;
+                    this.bank = (bankAndProgram >> 8) & 0x7F; // TODO: implement bank change
                     this.debugLog(`Bank: ${this.bank} Program: ${this.program}`);
 
                     this.sendMessage(false, MessageType.InstrumentChange, this.bank, this.program);
@@ -2972,6 +2971,9 @@ class Controller {
                         this.jumps++;
                         break;
                     }
+                    case MessageType.InstrumentChange: {
+                        break;
+                    } 
                     case MessageType.TrackEnded: {
                         let tracksActive = 0;
                         for (let i = 0; i < 16; i++) {
