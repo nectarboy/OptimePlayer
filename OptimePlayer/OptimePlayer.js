@@ -1663,7 +1663,7 @@ class SequenceTrack {
                 {
                     this.lfoType = this.readLastPcInc() & 0xff;
                     this.debugLog("LFO Type: " + this.lfoType);
-                    if (this.lfoType !== LfoType.Volume) {
+                    if (this.lfoType !== LfoType.Pitch) {
                         console.warn("Unimplemented LFO type: " + this.lfoType);
                     }
                     break;
@@ -1749,19 +1749,19 @@ class SequenceTrack {
                 }
                 case 0xE0: // LFO Delay
                 {
-                    this.lfoDelay = this.readPcInc(2);
+                    this.lfoDelay = this.readLastPcInc(2);
                     this.debugLog("LFO Delay: " + this.lfoDelay);
                     break;
                 }
                 case 0xE1: // BPM
                 {
-                    this.bpm = this.readPcInc(2);
+                    this.bpm = this.readLastPcInc(2);
                     this.debugLog("BPM: " + this.bpm);
                     break;
                 }
                 case 0xE3: // Sweep Pitch
                 {
-                    this.sweepPitch = this.readPcInc(2) << 16 >> 16;
+                    this.sweepPitch = this.readLastPcInc(2) << 16 >> 16;
                     this.debugLog("Sweep Pitch: " + this.sweepPitch);
                     break;
                 }
@@ -2603,7 +2603,7 @@ class Controller {
                     // @ts-ignore
                     indexToDelete = index;
                     this.synthesizers[entry.trackNum].cutInstrument(entry.synthInstrIndex);
-                    this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
+                    //this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
                 }
 
                 if (entry.stopFlag) {
@@ -2611,7 +2611,7 @@ class Controller {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
                         entry.adsrTimer = -92544;
-                        this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
+                        //this.sequence.tracks[entry.trackNum].restUntilEndOfNote = false;
                     }
                 }
                 else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !this.sequence.tracks[entry.trackNum].restUntilEndOfNote) {
@@ -2752,11 +2752,13 @@ class Controller {
 
         if (indexToDelete !== -1) {
             var note = this.activeNoteData[indexToDelete];
-            var indexToDeleteInTrackChannel = this.sequence.tracks[note.trackNum].activeChannels.indexOf(note);
+            var track = this.sequence.tracks[note.trackNum];
+            var indexToDeleteInTrackChannel = track.activeChannels.indexOf(note);
             if (indexToDeleteInTrackChannel !== -1) {
-                this.sequence.tracks[note.trackNum].activeChannels.splice(indexToDeleteInTrackChannel, 1);
-                if (this.sequence.tracks[note.trackNum].lastActiveChannel === note)
-                    this.sequence.tracks[note.trackNum].lastActiveChannel = null;
+                track.activeChannels.splice(indexToDeleteInTrackChannel, 1);
+                track.restUntilEndOfNote &&= (track.activeChannels.length > 0);
+                if (track.lastActiveChannel === note)
+                    track.lastActiveChannel = null;
             }
             this.activeNoteData.splice(indexToDelete, 1);
         }
