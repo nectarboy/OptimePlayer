@@ -333,7 +333,7 @@ function createRelativeDataView(other, offset, length) {
  * @returns {boolean}
  */
 function dataViewOutOfBounds(view, offset) {
-    return view.byteOffset + offset >+ view.byteLength;
+    return offset > view.byteLength;
 }
 
 /**
@@ -2701,7 +2701,6 @@ class Controller {
                 //     finetune = 0;
                 // }
                 if (entry.sweepPitch && entry.sweepCounter && entry.autoSweep) {
-                    console.log(1);
                     entry.sweepCounter--;
                 }
 
@@ -2988,21 +2987,18 @@ class Controller {
                             if (this.sequence.tracks[i].active) {
                                 tracksActive++;
                             }
-                            // else if (!this.sequence.tracks[i].restUntilEndOfNote) {
-                            //     for (note of this.sequence.tracks[i].activeChannels)
-                            //         note.stopFlag = true; 
-                            // }
                         }
 
                         if (tracksActive === 0) {
                             this.fadingStart = true;
-                            // for (note of this.activeNoteData)
-                            //     note.stopFlag = true;
+                            for (var note of this.activeNoteData) {
+                                note.adsrState = AdsrState.Release; // TODO: Is this correct? it fixes some bad loops. Ill call this the fin release theory 
+                            }
                         }
                         break;
                     }
                     case MessageType.VolumeChange: {
-                        this.synthesizers[msg.trackNum].volume = ((msg.param0 / 127) ** 2) * ((msg.param1 / 127) ** 2);
+                        this.synthesizers[msg.trackNum].volume = ((msg.param0 / 127) * (msg.param1 / 127)) ** 2;
                         break;
                     }
                     case MessageType.PanChange: {
