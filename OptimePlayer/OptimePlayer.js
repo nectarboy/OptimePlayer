@@ -1469,7 +1469,7 @@ class SequenceTrack {
                     this.restingUntilAChannelEnds = true;
             }
 
-            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration, {portamentoKey: this.portamentoKey, mono: this.mono}); // TODO: i dont like this random object. 
+            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration, {portamentoKey: this.portamentoKey, mono: this.mono, prg: this.program}); // TODO: i dont like this random object. 
             this.portamentoKey = note;
         } else {
             switch (opcode) {
@@ -1482,9 +1482,9 @@ class SequenceTrack {
                 case 0x81: // Set bank and program
                 {
                     let bankAndProgram = this.readLastVariableLength() >>> 0;
-                    this.program = bankAndProgram & 0xFF;
+                    this.program = bankAndProgram & 0x7FFF; // Bank change isnt ... needed ? i dont fully uderstand how this works tbh
                     this.bank = (bankAndProgram >> 8) & 0x7F; // TODO: implement bank change
-                    this.debugLog(`Bank: ${this.bank} Program: ${this.program}`);
+                    this.debugLogForce(`Bank change: ${this.bank} Program: ${this.program}`);
 
                     this.sendMessage(false, MessageType.InstrumentChange, this.bank, this.program);
                     break;
@@ -1826,6 +1826,9 @@ class SequenceTrack {
                     // Set restingFor to non-zero since the controller checks it to stop executing
                     this.restingFor = 1;
                     this.debugLogForce("Track hit a FIN");
+
+                    // for (var note of this.activeChannels)
+                    //     note.adsrState = AdsrState.Release;
 
                     // "When the sequence processes for all tracks end, the player processes also stop"
                     break;
@@ -2384,19 +2387,20 @@ class Controller {
         this.sdat = sdat;
 
         let sseqInfo = sdat.sseqInfos[sseqId];
-        if (!sseqInfo) throw new Error();
+        if (!sseqInfo) throw `Invalid SSEQ ID ${seqId}`;
         if (sseqInfo.bank === null) throw new Error();
         this.bankInfo = sdat.sbnkInfos[sseqInfo.bank];
-        if (!this.bankInfo) throw new Error();
+        if (!this.bankInfo) throw `Invalid bank number ${bank}`;
         this.instrumentBank = sdat.instrumentBanks[sseqInfo.bank];
+        if (!this.instrumentBank) throw `Invalid instrument bank ${bank}`;
 
         console.log("Playing SSEQ Id:" + sseqId);
         console.log("FAT ID:" + sseqInfo.fileId);
 
-        if (sseqInfo.fileId == null) throw new Error();
+        if (sseqInfo.fileId == null) throw `No file found for SSEQ ${seqId}`;
 
         let sseqFile = sdat.fat.get(sseqInfo.fileId);
-        if (!sseqFile) throw new Error();
+        if (!sseqFile) throw `No file found for SSEQ ${seqId}`;
 
         this.decodeSampleArchives();
 
@@ -2446,19 +2450,19 @@ class Controller {
         this.sdat = sdat;
 
         let ssarInfo = sdat.ssarInfos[ssarId];
-        if (!ssarInfo) throw new Error();
+        if (!ssarInfo) throw `Invalid SSAR ID ${seqId}`;
         let ssarFile = sdat.fat.get(ssarInfo.fileId);
-        if (!ssarFile) throw new Error();
+        if (!ssarFile) throw `No file found for SSAR ${seqId}`;
 
         let ssarListNumEntries = read32LE(ssarFile, 28);
         let ssarListOffs = 32 + subSseqId * 12;
 
         let bank = read16LE(ssarFile, ssarListOffs + 4);
         this.bankInfo = sdat.sbnkInfos[bank];
-        if (!this.bankInfo) throw new Error();
+        if (!this.bankInfo) throw `Invalid bank number ${bank}`;
         console.log('SSAR bank ID: ' + bank);
         this.instrumentBank = sdat.instrumentBanks[bank];
-        if (!this.instrumentBank) throw new Error();
+        if (!this.instrumentBank) throw `Invalid instrument bank ${bank}`;
 
         this.decodeSampleArchives();
 
@@ -2592,7 +2596,7 @@ class Controller {
             }
 
             if (instrument.fRecord !== 0) {
-                console.log(`Program ${i}: ${typeString}\nLinked archive ${instrument.swarInfoId[0]} Sample ${instrument.swavInfoId[0]}`);
+                //console.log(`Program ${i}: ${typeString}\nLinked archive ${instrument.swarInfoId[0]} Sample ${instrument.swavInfoId[0]}`);
             }
         }
     }
@@ -2792,7 +2796,7 @@ class Controller {
             this.bpmTimer -= 240;
 
             for (let note of this.activeNoteData) {
-                if (!note.autoSweep && note.sweepCounter) {
+                if (!note.autoSweep && note.sweepCounter /*&& this.sequence.tracks[note.trackNum].active*/) {
                     note.sweepCounter--;
                     //this.updateNoteFinetuneLfo(note);
                 }
@@ -2814,6 +2818,7 @@ class Controller {
                             let duration = msg.param2;
                             let portamentoKey = msg.param3.portamentoKey;
                             let mono = msg.param3.mono;
+                            let prg = msg.param3.prg;
 
                             if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
 
@@ -2822,7 +2827,7 @@ class Controller {
 
                             /** @type {InstrumentRecord} */
                             let track = this.sequence.tracks[msg.trackNum];
-                            let instrument = this.instrumentBank.instruments[track.program];
+                            let instrument = this.instrumentBank.instruments[prg];
 
                             // Null note
                             if (instrument.fRecord === 0)
@@ -2911,7 +2916,6 @@ class Controller {
 
                             var channel = null;
                             if (track.tie && track.lastActiveChannel) {
-                                console.log(velocity);
                                 channel = track.lastActiveChannel; //track.activeChannels[track.activeChannels.length - 1];
                                 var instr = this.synthesizers[msg.trackNum].instrs[channel.synthInstrIndex];
                                 instr.setNote(midiNote);
