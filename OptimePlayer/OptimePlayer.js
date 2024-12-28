@@ -2744,6 +2744,7 @@ class Controller {
                         instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
                         break;
                     case AdsrState.Sustain:
+                        instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
                         break;
                     case AdsrState.Release:
                         if (entry.adsrTimer <= -92544 || instrument.fRecord === InstrumentType.PsgPulse) {
@@ -2910,6 +2911,7 @@ class Controller {
 
                             var channel = null;
                             if (track.tie && track.lastActiveChannel) {
+                                console.log(velocity);
                                 channel = track.lastActiveChannel; //track.activeChannels[track.activeChannels.length - 1];
                                 var instr = this.synthesizers[msg.trackNum].instrs[channel.synthInstrIndex];
                                 instr.setNote(midiNote);
