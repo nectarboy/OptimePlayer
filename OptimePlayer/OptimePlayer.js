@@ -1593,11 +1593,12 @@ class SequenceTrack {
                     this.tie = bitTest(this.readLastPcInc(), 0);
                     this.debugLog("Tie On / Off: " + this.tie);
 
-                    // Apparently when a tie command is reached, the track's currently playing channels immediately stop
+                    // Apparently when a tie command is reached, the track's currently playing channels immediately stop. AMMENDMENT: they dont stop, they are just set to release
                     this.lastActiveChannel = null;
                     for (let i in this.activeChannels) {
                         var channel = this.activeChannels[i];
-                        channel.stopFlag = true;
+                        //channel.stopFlag = true;
+                        channel.adsrState = AdsrState.Release;
                     }
 
                     break;
@@ -2639,7 +2640,7 @@ class Controller {
                         entry.adsrTimer = -92544;
                     }
                 }
-                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !entry.infiniteDuration && !track.tie) {
+                else if (this.sequence.ticksElapsed >= entry.endTime && !entry.fromKeyboard && !entry.infiniteDuration/* && !track.tie*/) {
                     if (entry.adsrState !== AdsrState.Release) {
                         this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         entry.adsrState = AdsrState.Release;
@@ -3119,9 +3120,11 @@ class Controller {
             var instr = this.synthesizers[trackNum].instrs[channel.synthInstrIndex];
             instr.setNote(midiNote);
 
+            this.notesOn[trackNum][channel.midiNote] = 0;
+            this.notesOn[trackNum][midiNote] = 1;
             channel.midiNote = midiNote;
             channel.velocity = velocity;
-            channel.endTime = this.sequence.ticksElapsed + duration;
+            channel.endTime = this.sequence.ticksElapsed + duration + 1;
         }
         else {
             let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
@@ -3135,8 +3138,8 @@ class Controller {
                 velocity: velocity,
                 synthInstrIndex: synthInstrIndex,
                 startTime: this.sequence.ticksElapsed,
-                endTime: this.sequence.ticksElapsed + duration,
-                infiniteDuration: duration === 0,
+                endTime: this.sequence.ticksElapsed + duration + 1, // TODO: kind of fucky ik but this is what makes it play correctly
+                infiniteDuration: duration === 0 || track.tie,
                 instrument: instrument,
                 instrumentEntryIndex: index,
                 adsrState: AdsrState.Attack,
