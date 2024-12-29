@@ -1,5 +1,5 @@
 /** GLOBALS GO HERE **/
-let g_debug = false;
+let g_debug = true;
 
 let g_enableStereoSeparation = false;
 let g_enableForceStereoSeparation = false;
@@ -1213,14 +1213,6 @@ class Sequence {
                     }
                     this.tracks[i].restingFor -= !this.tracks[i].restingUntilAChannelEnds;
                 }
-
-                // for (let index in this.tracks[i].activeChannels) {
-                //     var channel = this.tracks[i].activeChannels[index];
-                //     if (!channel.autoSweep && channel.sweepCounter) {
-                //         channel.sweepCounter--;
-                //         //this.controller.updateNoteFinetuneLfo(channel);
-                //     }
-                // }
             }
         }
 
@@ -2751,7 +2743,7 @@ class Controller {
                         instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
                         break;
                     case AdsrState.Release:
-                        if (entry.adsrTimer <= -92544 || instrument.fRecord === InstrumentType.PsgPulse) {
+                        if (entry.adsrTimer <= -92544) {
                             // ADSR curve hit zero, cut the instrument
                             this.synthesizers[entry.trackNum].cutInstrument(entry.synthInstrIndex);
                             // @ts-ignore
@@ -2876,7 +2868,7 @@ class Controller {
                             }
 
                             if (track.sustainRate !== 0xff) {
-                                sustainRate = track.sustainRate;
+                                sustainRate = 0;
                                 sustainLevel = getSustainLevel(sustainRate);
                             }
                             else {
@@ -2895,7 +2887,7 @@ class Controller {
 
                             if (g_debug) {
                                 console.log(this.instrumentBank);
-                                console.log("Program " + this.sequence.tracks[msg.trackNum].program);
+                                console.log("Program " + prg);
                                 console.log("MIDI Note " + midiNote);
                                 console.log("Base MIDI Note: " + instrument.noteNumber[index]);
 
@@ -2903,7 +2895,7 @@ class Controller {
                                     console.log("PSG Pulse");
                                 }
 
-                                console.log("Attack: " + releaseRate);
+                                console.log("Attack: " + attackRate);
                                 console.log("Decay: " + decayRate);
                                 console.log("Sustain: " + sustainRate);
                                 console.log("Release: " + releaseRate);
