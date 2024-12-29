@@ -2868,7 +2868,7 @@ class Controller {
                             }
 
                             if (track.sustainRate !== 0xff) {
-                                sustainRate = 0;
+                                sustainRate = sustainRate;
                                 sustainLevel = getSustainLevel(sustainRate);
                             }
                             else {
