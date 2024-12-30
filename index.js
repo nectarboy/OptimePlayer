@@ -75,7 +75,7 @@ async function loadNdsRom(data) {
             for (const i of sdat.ssarList) {
                 let ssarName = sdat.ssarIdNameDict.get(i);
                 songPicker.insertAdjacentHTML("beforeend", ssarName ? '<h3>Sequence Archive ' + i + ' (' + ssarName + '):</h3>' : '<h3>Sequence Archive ' + i + ':</h3>');
-                let ssarSeqCount = read32LE(sdat.fat.get(sdat.ssarInfos[i].fileId), 28);
+                let ssarSeqCount = sdat.getNumOfEntriesInSeqArc(i);
 
                 for (var ii = 0; ii < ssarSeqCount; ii++) {
                     let sseqName = sdat.ssarSseqSymbols[i] ? sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.get(ii) : null;
@@ -619,16 +619,22 @@ window.onload = async () => {
                 switch (key) {
                     case "ArrowLeft":
                     case "ArrowRight":
-                        let currentSseqListIndex = g_currentlyPlayingSdat.sseqList.indexOf(g_currentlyPlayingId);
-                        let nextSseqListIndex;
+                        let nextListIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSubId : g_currentlyPlayingId;
+                        let listMaxIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSdat.getNumOfEntriesInSeqArc(g_currentlyPlayingId) - 1 : g_currentlyPlayingSdat.sseqList.length - 1;
                         if (key === "ArrowLeft") {
-                            nextSseqListIndex = g_currentlyPlayingSdat.sseqList[currentSseqListIndex - 1];
+                            if (nextListIndex === 0)
+                                break;
+                            nextListIndex--;
                         } else if (key === "ArrowRight") {
-                            nextSseqListIndex = g_currentlyPlayingSdat.sseqList[currentSseqListIndex + 1];
+                            if (nextListIndex === listMaxIndex)
+                                break;
+                            nextListIndex++;
                         }
-                        if (nextSseqListIndex) {
-                            playSeq(g_currentlyPlayingSdat, nextSseqListIndex);
-                        }
+
+                        if (g_currentlyPlayingIsSsar)
+                            playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, nextListIndex);
+                        else
+                            playSeq(g_currentlyPlayingSdat, nextListIndex);
                         break;
                     default:
                         break;

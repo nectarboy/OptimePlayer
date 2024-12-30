@@ -932,6 +932,10 @@ class Sdat {
 
         return sdat;
     }
+
+    getNumOfEntriesInSeqArc(ssarId) {
+        return read32LE(this.fat.get(this.ssarInfos[ssarId].fileId), 28);
+    }
 }
 
 class Message {
@@ -1287,7 +1291,6 @@ class SequenceTrack {
         this.expression = 0x7f;
         this.priority = 0;
         this.program = 0;
-        this.bank = 0;
 
         this.lfoType = 0;
         this.lfoDepth = 0;
@@ -1474,12 +1477,11 @@ class SequenceTrack {
                 }
                 case 0x81: // Set bank and program
                 {
-                    let bankAndProgram = this.readLastVariableLength() >>> 0;
-                    this.program = bankAndProgram & 0x7FFF; // Bank change isnt ... needed ? i dont fully uderstand how this works tbh
-                    this.bank = (bankAndProgram >> 8) & 0x7F; // TODO: implement bank change
-                    this.debugLogForce(`Bank change: ${this.bank} Program: ${this.program}`);
+                    let program = this.readLastVariableLength() >>> 0;
+                    this.program = program & 0x7FFF;
+                    this.debugLogForce(`Program: ${this.program}`);
 
-                    this.sendMessage(false, MessageType.InstrumentChange, this.bank, this.program);
+                    this.sendMessage(false, MessageType.InstrumentChange, this.program);
                     break;
                 }
                 case 0x93: // Start new track thread 
@@ -2063,10 +2065,12 @@ class SampleSynthesizer {
         let delayL = Math.round(delaySL * this.sampleRate);
         let delayR = Math.round(delaySR * this.sampleRate);
         // console.log(`L:${delaySL * 1000}ms R:${delaySR * 1000}ms X:${x}`);
+
         // TODO: Intelligent fadeouts to prevent clicking when panning
-        this.delayLineL.setDelay(delayL);
-        this.delayLineR.setDelay(delayR);
-        this.delayLineR.gain = gainR;
+        //this.delayLineL.setDelay(delayL);
+        //this.delayLineR.setDelay(delayR);
+        //this.delayLineR.gain = gainR;
+
         this.pan = pan;
     }
 }
@@ -3029,6 +3033,10 @@ class Controller {
 
         /** @type {InstrumentRecord} */
         let instrument = this.instrumentBank.instruments[track.program];
+        if (!instrument) {
+            return;
+            console.warn(`Invalid instrument, prg: ${track.program}, track: ${trackNum}`);
+        }
 
         // Null note
         if (instrument.fRecord === 0)
@@ -3041,7 +3049,7 @@ class Controller {
         let sampleId = instrument.swavInfoId[index];
 
         let archive = this.decodedSampleArchives[archiveIndex];
-        if (!archive) throw new Error();
+        if (!archive) return; //throw new Error();
         let sample = archive[sampleId];
 
         if (instrument.fRecord === InstrumentType.PsgPulse) {
