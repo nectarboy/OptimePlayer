@@ -3020,6 +3020,7 @@ class Controller {
 
     playNote(trackNum, midiNote, velocity, duration, fromKeyboard=false) {
         let track = this.sequence.tracks[trackNum];
+        let rawMidiNote = midiNote;
 
         if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
 
@@ -3115,7 +3116,8 @@ class Controller {
         }
 
         var channel = null;
-        if (track.tie && track.lastActiveChannel) {
+        var tieInPrevious = track.tie && track.lastActiveChannel;
+        if (tieInPrevious) {
             channel = track.lastActiveChannel; //track.activeChannels[track.activeChannels.length - 1];
             var instr = this.synthesizers[trackNum].instrs[channel.synthInstrIndex];
             instr.setNote(midiNote);
@@ -3124,6 +3126,7 @@ class Controller {
             this.notesOn[trackNum][midiNote] = 1;
             channel.midiNote = midiNote;
             channel.velocity = velocity;
+            channel.infiniteDuration = duration === 0 || track.tie;
             channel.endTime = this.sequence.ticksElapsed + duration + 1;
         }
         else {
@@ -3153,12 +3156,12 @@ class Controller {
             track.activeChannels.push(channel);
             track.lastActiveChannel = channel;
 
-            if (track.restingUntilAChannelEnds && channel.infiniteDuration && track.mono) {
+            if (track.restingUntilAChannelEnds && duration === 0 && track.mono) {
                 track.channelWaitingFor = channel;
             }
         }
 
-        var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((track.portamentoKey - midiNote) << 6);
+        var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((track.portamentoKey - rawMidiNote) << 6);
         var sweepLength;
         var autoSweep;
         if (track.portamentoTime) {
