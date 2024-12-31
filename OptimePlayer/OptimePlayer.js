@@ -498,6 +498,8 @@ class SwarInfo {
 
 class Sdat {
     constructor() {
+        this.rawView = null;
+
         /**
          * @type {number[]}
          */
@@ -569,6 +571,7 @@ class Sdat {
      */
     static parseFromDataView(view) {
         let sdat = new Sdat();
+        sdat.rawView = view;
 
         console.log("SDAT file size: " + view.byteLength);
 
@@ -1477,8 +1480,8 @@ class SequenceTrack {
                 }
                 case 0x81: // Set bank and program
                 {
-                    let program = this.readLastVariableLength() >>> 0;
-                    this.program = program & 0x7FFF;
+                    let program_ = this.readLastVariableLength() >>> 0;
+                    this.program = program_ & 0x7FFF;
                     this.debugLogForce(`Program: ${this.program}`);
 
                     this.sendMessage(false, MessageType.InstrumentChange, this.program);
@@ -1487,7 +1490,7 @@ class SequenceTrack {
                 case 0x93: // Start new track thread 
                 {
                     let trackNum = this.readPcInc();
-                    let trackOffs = this.readPcInc(3);
+                    let trackOffs = this.readLastPcInc(3);
 
                     this.sequence.startTrack(trackNum, trackOffs);
 
@@ -2814,12 +2817,15 @@ class Controller {
                 switch (msg.type) {
                     case MessageType.PlayNote:
                         if (this.activeKeyboardTrackNum !== msg.trackNum || msg.fromKeyboard) {
+                            let track = this.sequence.tracks[msg.trackNum];
+
                             let midiNote = msg.param0;
+                            let rawMidiNote = midiNote;
                             let velocity = msg.param1;
                             let duration = msg.param2;
                             let portamentoKey = msg.param3.portamentoKey;
                             let mono = msg.param3.mono;
-                            let prg = msg.param3.prg;
+                            let prg = msg.param3.prg; track.program;
 
                             if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
 
@@ -2827,7 +2833,6 @@ class Controller {
                             // refers to the archive ID referred to by the corresponding SBNK entry in the INFO block
 
                             /** @type {InstrumentRecord} */
-                            let track = this.sequence.tracks[msg.trackNum];
                             let instrument = this.instrumentBank.instruments[prg];
 
                             // Null note
@@ -2926,7 +2931,7 @@ class Controller {
                                 channel.endTime = this.sequence.ticksElapsed + duration;
                             }
                             else {
-                                let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
+                                let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0) : 0;
                                 let synthInstrIndex = this.synthesizers[msg.trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
 
                                 this.notesOn[msg.trackNum][midiNote] = 1;
@@ -2938,7 +2943,7 @@ class Controller {
                                     synthInstrIndex: synthInstrIndex,
                                     startTime: this.sequence.ticksElapsed,
                                     endTime: this.sequence.ticksElapsed + duration,
-                                    infiniteDuration: duration === 0,
+                                    infiniteDuration: duration === 0 || track.tie,
                                     instrument: instrument,
                                     instrumentEntryIndex: index,
                                     adsrState: AdsrState.Attack,
@@ -2957,7 +2962,7 @@ class Controller {
                                 }
                             }
 
-                            var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - midiNote) << 6);
+                            var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - rawMidiNote) << 6);
                             var sweepLength;
                             var autoSweep;
                             if (track.portamentoTime) {
@@ -3037,22 +3042,29 @@ class Controller {
         /** @type {InstrumentRecord} */
         let instrument = this.instrumentBank.instruments[track.program];
         if (!instrument) {
-            return;
             console.warn(`Invalid instrument, prg: ${track.program}, track: ${trackNum}`);
+            return;
         }
 
         // Null note
-        if (instrument.fRecord === 0)
+        if (instrument.fRecord === 0) {
+            console.warn('Null note');
             return;
+        }
 
         let index = instrument.resolveEntryIndex(midiNote);
-        if (index === -1)
+        if (index === -1) {
+            console.warn('Invalid index');
             return;
+        }
         let archiveIndex = instrument.swarInfoId[index];
         let sampleId = instrument.swavInfoId[index];
 
         let archive = this.decodedSampleArchives[archiveIndex];
-        if (!archive) return; //throw new Error();
+        if (!archive) {
+            console.warn('No archive');
+            return; //throw new Error();
+        }
         let sample = archive[sampleId];
 
         if (instrument.fRecord === InstrumentType.PsgPulse) {
@@ -3063,8 +3075,8 @@ class Controller {
             console.warn('[UNIMPLEMENTED] PSG Noise Note');
         }
         else {
-            sample.frequency = midiNoteToHz(instrument.noteNumber[0]); // TODO: Is this property really needed ..?
-            midiNote += instrument.noteNumber[0] - instrument.noteNumber[index]; // For multi-sample instruments
+            sample.frequency = midiNoteToHz(0); // TODO: This causes bugs and needs to go..
+            midiNote += 0 - instrument.noteNumber[index]; // For multi-sample instruments
             sample.resampleMode = ResampleMode.Cubic;
         }
 
@@ -3141,7 +3153,7 @@ class Controller {
             channel.endTime = this.sequence.ticksElapsed + duration + 1;
         }
         else {
-            let initialVolume = instrument.attackCoefficient[index] === 0 ? calcChannelVolume(velocity, 0) : 0;
+            let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0) : 0;
             let synthInstrIndex = this.synthesizers[trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
 
             this.notesOn[trackNum][midiNote] = 1;
@@ -3359,6 +3371,14 @@ async function downloadSample(sample) {
     }
 
     downloadUint8Array("sample.wav", downloader.encode());
+}
+
+async function downloadSdatFile(sdat) {
+    var data = new Uint8Array(sdat.rawView.byteLength);
+    for (var i = 0; i < data.length; i++)
+        data[i] = sdat.rawView.getUint8(i);
+
+    downloadUint8Array("sounddata.sdat", data);
 }
 
 /**
