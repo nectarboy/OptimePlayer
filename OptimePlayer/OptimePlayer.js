@@ -1792,6 +1792,9 @@ class SequenceTrack {
                                 break;
                             }
                         }
+                        else {
+                            this.sendMessage(false, MessageType.Jump); // Because this is an infinite loop
+                        }
                         this.pc = this.loopStack[i];
                         //this.debugLogForce('Loop End, back to ' + this.pc);
                     }

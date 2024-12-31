@@ -168,13 +168,11 @@ window.onload = async () => {
     let progressModal = document.getElementById("progress-modal");
     let progressBar = document.getElementById("progress-bar");
     let progressInfo = document.getElementById("progress-info");
-    const FADEOUT_LENGTH = 10; // in seconds 
+    const FADEOUT_LENGTH = 2; // in seconds 
     const LOOP_COUNT = 2;
     const SAMPLE_RATE = 32768;
 
-    function getSseqLength(sdat, name) {
-        let id = sdat.sseqNameIdDict.get(name);
-        let controller = new Controller(SAMPLE_RATE, sdat, id);
+    function getSseqLengthFromController(controller) {
         let loop = 0;
         let playing = true;
 
@@ -209,18 +207,43 @@ window.onload = async () => {
      * @param {Sdat} sdat
      * @param {string} name
      */
-    async function renderAndDownloadSeq(sdat, name) {
+    async function renderAndDownloadSeq(sdat, id, subId, isSsar) {
         progressModal.style.display = "block";
 
         await g_currentPlayer?.ctx.close();
         g_currentController = null;
 
-        let id = sdat.sseqNameIdDict.get(name);
+        let controller = new Controller(SAMPLE_RATE);
+        let name;
+        let lengthS;
+        if (isSsar) {
+            controller.loadSsarSeq(sdat, id, subId);
 
-        let controller = new Controller(SAMPLE_RATE, sdat, id);
+            let name;
+            if (sdat.ssarSseqSymbols[id] && sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId))
+                name = sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId);
+            else
+                name = null;
 
-        console.log("Rendering SSEQ Id:" + id);
-        // console.log("FAT ID:" + info.fileId);
+            let tmpController = new Controller(SAMPLE_RATE);
+            tmpController.loadSsarSeq(sdat, id, subId);
+            lengthS = getSseqLengthFromController(tmpController);
+        } 
+        else {
+            controller.loadSseq(sdat, id);
+
+            let name;
+            if (sdat.sseqIdNameDict.get(id))
+                name = sdat.sseqIdNameDict.get(id);
+            else
+                name = null;
+
+            let tmpController = new Controller(SAMPLE_RATE);
+            tmpController.loadSseq(sdat, id);
+            lengthS = getSseqLengthFromController(tmpController);
+        }
+
+        console.log('Downloading sequence, name:', name);
 
         let encoder = new WavEncoder(SAMPLE_RATE, 16);
 
@@ -239,7 +262,6 @@ window.onload = async () => {
 
         // keep it under 480 seconds
 
-        const lengthS = getSseqLength(sdat, name);
         console.log(lengthS);
         const CHUNK_SIZE = Math.floor(SAMPLE_RATE);
 
@@ -282,9 +304,9 @@ window.onload = async () => {
                     if (fadeoutSample >= 0) {
                         let fadeoutTime = fadeoutSample / SAMPLE_RATE;
 
-                        let ratio = fadeoutTime / FADEOUT_LENGTH;
+                        let ratio = (fadeoutTime) / FADEOUT_LENGTH;
 
-                        fadeoutVolMul = 1 - ratio;
+                        fadeoutVolMul = (1 - ratio);
 
                         if (fadeoutVolMul <= 0) {
                             playing = false;
@@ -785,7 +807,7 @@ window.onload = async () => {
     requestAnimationFrame(fsVisFrame);
 
     (/** @type {HTMLButtonElement} */ (document.querySelector("#download-playing-button"))).onclick = e => {
-        renderAndDownloadSeq(g_currentlyPlayingSdat, g_currentlyPlayingName);
+        renderAndDownloadSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, g_currentlyPlayingSubId, g_currentlyPlayingIsSsar);
     };
 
     registerCheckbox("#stereo-separation", true, checked => {
