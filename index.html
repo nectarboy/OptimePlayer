@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Optime Player</title>
+    <title>Optime Player DX</title>
 
     <style>
         @font-face {
@@ -65,6 +65,8 @@
             columns: 1;
 
             display: none;
+            position: sticky; /* TODO: make this proper later */
+            top: 0;
         }
 
         #fullscreen-vis-canvas {
@@ -124,7 +126,7 @@
 <div id='drop-zone'>
     <h1>Drop file!</h1>
 </div>
-<h1 style="margin-bottom: 0">Optime Player</h1>
+<h1 style="margin-bottom: 0">Optime Player DX</h1>
 <a href="https://github.com/Powerlated/OptimePlayer">https://github.com/Powerlated/OptimePlayer</a>
 
 
@@ -142,9 +144,9 @@
 
     <div>
         <div id="file-picker-container">
-            <h3>Drag and drop a Nintendo DS ROM</h3>
+            <h3>Drag and drop a Nintendo DS ROM or an SDAT File</h3>
             <p>or</p>
-            <input type="file" id="file-picker" accept=".nds">
+            <input type="file" id="file-picker" accept=".nds, .sdat">
         </div>
         <div id="demos">
             <h3>Demos</h3>
