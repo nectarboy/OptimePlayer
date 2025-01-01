@@ -1,5 +1,5 @@
 /** GLOBALS GO HERE **/
-let g_debug = true;
+let g_debug = false;
 
 let g_enableStereoSeparation = false;
 let g_enableForceStereoSeparation = false;
@@ -1480,8 +1480,8 @@ class SequenceTrack {
                 }
                 case 0x81: // Set bank and program
                 {
-                    let program_ = this.readLastVariableLength() >>> 0;
-                    this.program = program_ & 0x7FFF;
+                    let program = this.readLastVariableLength() >>> 0;
+                    this.program = program & 0x7FFF;
                     this.debugLogForce(`Program: ${this.program}`);
 
                     this.sendMessage(false, MessageType.InstrumentChange, this.program);
@@ -2817,173 +2817,174 @@ class Controller {
                 switch (msg.type) {
                     case MessageType.PlayNote:
                         if (this.activeKeyboardTrackNum !== msg.trackNum || msg.fromKeyboard) {
-                            let track = this.sequence.tracks[msg.trackNum];
+                            this.playNote(msg.trackNum, msg.param0, msg.param1, msg.param2, msg.fromKeyboard);
+                            // let track = this.sequence.tracks[msg.trackNum];
 
-                            let midiNote = msg.param0;
-                            let rawMidiNote = midiNote;
-                            let velocity = msg.param1;
-                            let duration = msg.param2;
-                            let portamentoKey = msg.param3.portamentoKey;
-                            let mono = msg.param3.mono;
-                            let prg = msg.param3.prg; track.program;
+                            // let midiNote = msg.param0;
+                            // let rawMidiNote = midiNote;
+                            // let velocity = msg.param1;
+                            // let duration = msg.param2;
+                            // let portamentoKey = msg.param3.portamentoKey;
+                            // let mono = msg.param3.mono;
+                            // let prg = msg.param3.prg; track.program;
 
-                            if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
+                            // if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
 
-                            // The archive ID inside each instrument record inside each SBNK file
-                            // refers to the archive ID referred to by the corresponding SBNK entry in the INFO block
+                            // // The archive ID inside each instrument record inside each SBNK file
+                            // // refers to the archive ID referred to by the corresponding SBNK entry in the INFO block
 
-                            /** @type {InstrumentRecord} */
-                            let instrument = this.instrumentBank.instruments[prg];
+                            // /** @type {InstrumentRecord} */
+                            // let instrument = this.instrumentBank.instruments[prg];
 
-                            // Null note
-                            if (instrument.fRecord === 0)
-                                break;
+                            // // Null note
+                            // if (instrument.fRecord === 0)
+                            //     break;
 
-                            let index = instrument.resolveEntryIndex(midiNote);
-                            if (index === -1)
-                                break;
-                            let archiveIndex = instrument.swarInfoId[index];
-                            let sampleId = instrument.swavInfoId[index];
+                            // let index = instrument.resolveEntryIndex(midiNote);
+                            // if (index === -1)
+                            //     break;
+                            // let archiveIndex = instrument.swarInfoId[index];
+                            // let sampleId = instrument.swavInfoId[index];
 
-                            let archive = this.decodedSampleArchives[archiveIndex];
-                            if (!archive) throw new Error();
-                            let sample = archive[sampleId];
+                            // let archive = this.decodedSampleArchives[archiveIndex];
+                            // if (!archive) throw new Error();
+                            // let sample = archive[sampleId];
 
-                            if (instrument.fRecord === InstrumentType.PsgPulse) {
-                                sample = squares[sampleId];
-                                sample.resampleMode = ResampleMode.NearestNeighbor;
-                            }
-                            else if (instrument.fRecord === InstrumentType.PsgNoise) {
-                                console.warn('[UNIMPLEMENTED] PSG Noise Note');
-                            }
-                            else {
-                                sample.frequency = midiNoteToHz(instrument.noteNumber[0]); // TODO: Is this property really needed ..?
-                                midiNote += instrument.noteNumber[0] - instrument.noteNumber[index]; // For multi-sample instruments
-                                sample.resampleMode = ResampleMode.Cubic;
-                            }
+                            // if (instrument.fRecord === InstrumentType.PsgPulse) {
+                            //     sample = squares[sampleId];
+                            //     sample.resampleMode = ResampleMode.NearestNeighbor;
+                            // }
+                            // else if (instrument.fRecord === InstrumentType.PsgNoise) {
+                            //     console.warn('[UNIMPLEMENTED] PSG Noise Note');
+                            // }
+                            // else {
+                            //     sample.frequency = midiNoteToHz(instrument.noteNumber[0]); // TODO: Is this property really needed ..?
+                            //     midiNote += instrument.noteNumber[0] - instrument.noteNumber[index]; // For multi-sample instruments
+                            //     sample.resampleMode = ResampleMode.Cubic;
+                            // }
 
-                            let attackRate, attackCoefficient, decayRate, decayCoefficient, sustainRate, sustainLevel, releaseRate, releaseCoefficient;
-                            if (track.attackRate !== 0xff) {
-                                attackRate = track.attackRate;
-                                attackCoefficient = getEffectiveAttack(attackRate);
-                            }
-                            else {
-                                attackRate = instrument.attack[index];
-                                attackCoefficient = instrument.attackCoefficient[index];
-                            }
+                            // let attackRate, attackCoefficient, decayRate, decayCoefficient, sustainRate, sustainLevel, releaseRate, releaseCoefficient;
+                            // if (track.attackRate !== 0xff) {
+                            //     attackRate = track.attackRate;
+                            //     attackCoefficient = getEffectiveAttack(attackRate);
+                            // }
+                            // else {
+                            //     attackRate = instrument.attack[index];
+                            //     attackCoefficient = instrument.attackCoefficient[index];
+                            // }
 
-                            if (track.decayRate !== 0xff) {
-                                decayRate = track.decayRate;
-                                decayCoefficient = CalcDecayCoeff(decayRate);
-                            }
-                            else {
-                                decayRate = instrument.decay[index];
-                                decayCoefficient = instrument.decayCoefficient[index];
-                            }
+                            // if (track.decayRate !== 0xff) {
+                            //     decayRate = track.decayRate;
+                            //     decayCoefficient = CalcDecayCoeff(decayRate);
+                            // }
+                            // else {
+                            //     decayRate = instrument.decay[index];
+                            //     decayCoefficient = instrument.decayCoefficient[index];
+                            // }
 
-                            if (track.sustainRate !== 0xff) {
-                                sustainRate = track.sustainRate;
-                                sustainLevel = getSustainLevel(sustainRate);
-                            }
-                            else {
-                                sustainRate = instrument.sustain[index];
-                                sustainLevel = instrument.sustainLevel[index];
-                            }
+                            // if (track.sustainRate !== 0xff) {
+                            //     sustainRate = track.sustainRate;
+                            //     sustainLevel = getSustainLevel(sustainRate);
+                            // }
+                            // else {
+                            //     sustainRate = instrument.sustain[index];
+                            //     sustainLevel = instrument.sustainLevel[index];
+                            // }
                             
-                            if (track.releaseRate !== 0xff) {
-                                releaseRate = track.releaseRate;
-                                releaseCoefficient = CalcDecayCoeff(releaseRate);
-                            }
-                            else {
-                                releaseRate = instrument.release[index];
-                                releaseCoefficient = instrument.releaseCoefficient[index];
-                            }
+                            // if (track.releaseRate !== 0xff) {
+                            //     releaseRate = track.releaseRate;
+                            //     releaseCoefficient = CalcDecayCoeff(releaseRate);
+                            // }
+                            // else {
+                            //     releaseRate = instrument.release[index];
+                            //     releaseCoefficient = instrument.releaseCoefficient[index];
+                            // }
 
-                            if (g_debug) {
-                                console.log(this.instrumentBank);
-                                console.log("Program " + prg);
-                                console.log("MIDI Note " + midiNote);
-                                console.log("Base MIDI Note: " + instrument.noteNumber[index]);
+                            // if (g_debug) {
+                            //     console.log(this.instrumentBank);
+                            //     console.log("Program " + prg);
+                            //     console.log("MIDI Note " + midiNote);
+                            //     console.log("Base MIDI Note: " + instrument.noteNumber[index]);
 
-                                if (instrument.fRecord === InstrumentType.PsgPulse) {
-                                    console.log("PSG Pulse");
-                                }
+                            //     if (instrument.fRecord === InstrumentType.PsgPulse) {
+                            //         console.log("PSG Pulse");
+                            //     }
 
-                                console.log("Attack: " + attackRate);
-                                console.log("Decay: " + decayRate);
-                                console.log("Sustain: " + sustainRate);
-                                console.log("Release: " + releaseRate);
+                            //     console.log("Attack: " + attackRate);
+                            //     console.log("Decay: " + decayRate);
+                            //     console.log("Sustain: " + sustainRate);
+                            //     console.log("Release: " + releaseRate);
 
-                                console.log("Attack Coefficient: " + attackCoefficient);
-                                console.log("Decay Coefficient: " + decayCoefficient);
-                                console.log("Sustain Level: " + sustainLevel);
-                                console.log("Release Coefficient: " + releaseCoefficient);
-                            }
+                            //     console.log("Attack Coefficient: " + attackCoefficient);
+                            //     console.log("Decay Coefficient: " + decayCoefficient);
+                            //     console.log("Sustain Level: " + sustainLevel);
+                            //     console.log("Release Coefficient: " + releaseCoefficient);
+                            // }
 
-                            var channel = null;
-                            if (track.tie && track.lastActiveChannel) {
-                                channel = track.lastActiveChannel; //track.activeChannels[track.activeChannels.length - 1];
-                                var instr = this.synthesizers[msg.trackNum].instrs[channel.synthInstrIndex];
-                                instr.setNote(midiNote);
+                            // var channel = null;
+                            // if (track.tie && track.lastActiveChannel) {
+                            //     channel = track.lastActiveChannel; //track.activeChannels[track.activeChannels.length - 1];
+                            //     var instr = this.synthesizers[msg.trackNum].instrs[channel.synthInstrIndex];
+                            //     instr.setNote(midiNote);
 
-                                channel.midiNote = midiNote;
-                                channel.velocity = velocity;
-                                channel.endTime = this.sequence.ticksElapsed + duration;
-                            }
-                            else {
-                                let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0) : 0;
-                                let synthInstrIndex = this.synthesizers[msg.trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
+                            //     channel.midiNote = midiNote;
+                            //     channel.velocity = velocity;
+                            //     channel.endTime = this.sequence.ticksElapsed + duration;
+                            // }
+                            // else {
+                            //     let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0) : 0;
+                            //     let synthInstrIndex = this.synthesizers[msg.trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
 
-                                this.notesOn[msg.trackNum][midiNote] = 1;
-                                channel = {
-                                    stopFlag: false,
-                                    trackNum: msg.trackNum,
-                                    midiNote: midiNote,
-                                    velocity: velocity,
-                                    synthInstrIndex: synthInstrIndex,
-                                    startTime: this.sequence.ticksElapsed,
-                                    endTime: this.sequence.ticksElapsed + duration,
-                                    infiniteDuration: duration === 0 || track.tie,
-                                    instrument: instrument,
-                                    instrumentEntryIndex: index,
-                                    adsrState: AdsrState.Attack,
-                                    adsrTimer: -92544, // idk why this number, ask gbatek
-                                    fromKeyboard: msg.fromKeyboard,
-                                    lfoCounter: 0,
-                                    lfoDelayCounter: 0,
-                                    delayCounter: 0
-                                };
-                                this.activeNoteData.push(channel);
-                                track.activeChannels.push(channel);
-                                track.lastActiveChannel = channel;
+                            //     this.notesOn[msg.trackNum][midiNote] = 1;
+                            //     channel = {
+                            //         stopFlag: false,
+                            //         trackNum: msg.trackNum,
+                            //         midiNote: midiNote,
+                            //         velocity: velocity,
+                            //         synthInstrIndex: synthInstrIndex,
+                            //         startTime: this.sequence.ticksElapsed,
+                            //         endTime: this.sequence.ticksElapsed + duration,
+                            //         infiniteDuration: duration === 0 || track.tie,
+                            //         instrument: instrument,
+                            //         instrumentEntryIndex: index,
+                            //         adsrState: AdsrState.Attack,
+                            //         adsrTimer: -92544, // idk why this number, ask gbatek
+                            //         fromKeyboard: msg.fromKeyboard,
+                            //         lfoCounter: 0,
+                            //         lfoDelayCounter: 0,
+                            //         delayCounter: 0
+                            //     };
+                            //     this.activeNoteData.push(channel);
+                            //     track.activeChannels.push(channel);
+                            //     track.lastActiveChannel = channel;
 
-                                if (track.restingUntilAChannelEnds && channel.infiniteDuration && mono) {
-                                    track.channelWaitingFor = channel;
-                                }
-                            }
+                            //     if (track.restingUntilAChannelEnds && channel.infiniteDuration && mono) {
+                            //         track.channelWaitingFor = channel;
+                            //     }
+                            // }
 
-                            var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - rawMidiNote) << 6);
-                            var sweepLength;
-                            var autoSweep;
-                            if (track.portamentoTime) {
-                                sweepLength = (track.portamentoTime * track.portamentoTime * Math.abs(sweepPitch)) >> 11;
-                                autoSweep = true;
-                            }
-                            else {
-                                sweepLength = duration;
-                                autoSweep = false;
-                            }
+                            // var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - rawMidiNote) << 6);
+                            // var sweepLength;
+                            // var autoSweep;
+                            // if (track.portamentoTime) {
+                            //     sweepLength = (track.portamentoTime * track.portamentoTime * Math.abs(sweepPitch)) >> 11;
+                            //     autoSweep = true;
+                            // }
+                            // else {
+                            //     sweepLength = duration;
+                            //     autoSweep = false;
+                            // }
 
-                            channel.sweepPitch = sweepPitch;
-                            channel.sweepCounter = sweepLength;
-                            channel.sweepLength = sweepLength;
-                            channel.autoSweep = autoSweep;
-                            this.updateNoteFinetuneLfo(channel);
+                            // channel.sweepPitch = sweepPitch;
+                            // channel.sweepCounter = sweepLength;
+                            // channel.sweepLength = sweepLength;
+                            // channel.autoSweep = autoSweep;
+                            // this.updateNoteFinetuneLfo(channel);
 
-                            channel.attackCoefficient = attackCoefficient;
-                            channel.decayCoefficient = decayCoefficient;
-                            channel.sustainLevel = sustainLevel;
-                            channel.releaseCoefficient = releaseCoefficient;
+                            // channel.attackCoefficient = attackCoefficient;
+                            // channel.decayCoefficient = decayCoefficient;
+                            // channel.sustainLevel = sustainLevel;
+                            // channel.releaseCoefficient = releaseCoefficient;
                         }
                         break;
                     case MessageType.Jump: {
@@ -3146,8 +3147,8 @@ class Controller {
             instr.setNote(midiNote);
 
             this.notesOn[trackNum][channel.midiNote] = 0;
-            this.notesOn[trackNum][midiNote] = 1;
-            channel.midiNote = midiNote;
+            this.notesOn[trackNum][rawMidiNote] = 1;
+            channel.midiNote = rawMidiNote;
             channel.velocity = velocity;
             channel.infiniteDuration = duration === 0 || track.tie;
             channel.endTime = this.sequence.ticksElapsed + duration + 1;
@@ -3156,11 +3157,11 @@ class Controller {
             let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0) : 0;
             let synthInstrIndex = this.synthesizers[trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
 
-            this.notesOn[trackNum][midiNote] = 1;
+            this.notesOn[trackNum][rawMidiNote] = 1;
             channel = {
                 stopFlag: false,
                 trackNum: trackNum,
-                midiNote: midiNote,
+                midiNote: rawMidiNote,
                 velocity: velocity,
                 synthInstrIndex: synthInstrIndex,
                 startTime: this.sequence.ticksElapsed,
