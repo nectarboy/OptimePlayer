@@ -884,6 +884,7 @@ class Sdat {
                         case InstrumentType.SingleSample: // Sample
                         case InstrumentType.PsgPulse: // PSG Pulse
                         case InstrumentType.PsgNoise: // PSG Noise
+                            instrument.instrumentTypes[0] = fRecord;
                             readRecordData(0, 0);
                             break;
 
@@ -895,6 +896,7 @@ class Sdat {
                             instrument.upperNote = read8(bankFile, recordOffset + 1);
 
                             for (let k = 0; k < instrumentCount; k++) {
+                                instrument.instrumentTypes[k] = read8(bankFile, recordOffset + k * 12 + 8);
                                 readRecordData(k, 4 + k * 12);
                             }
                             break;
@@ -916,6 +918,8 @@ class Sdat {
                             }
 
                             for (let k = 0; k < instrumentCount; k++) {
+                                instrument.instrumentTypes[k] = read8(bankFile, recordOffset + k * 12 + 8);
+                                console.log(instrument.instrumentTypes[k])
                                 readRecordData(k, 10 + k * 12);
                             }
                             break;
@@ -1023,6 +1027,8 @@ class InstrumentRecord {
 
         this.regionEnd = new Uint8Array(8);
 
+        /** @type {number[]} */
+        this.instrumentTypes = [];
         /** @type {number[]} */
         this.swavInfoId = [];
         /** @type {number[]} */
@@ -2995,6 +3001,9 @@ class Controller {
                         break;
                     } 
                     case MessageType.TrackEnded: {
+                        for (var channel of this.sequence.tracks[msg.trackNum].activeChannels)
+                            channel.adsrState = AdsrState.Release; // Src: pret/pokediamond
+
                         let tracksActive = 0;
                         for (let i = 0; i < 16; i++) {
                             if (this.sequence.tracks[i].active) {
@@ -3004,9 +3013,9 @@ class Controller {
 
                         if (tracksActive === 0) {
                             this.fadingStart = true;
-                            for (var note of this.activeNoteData) {
-                                note.adsrState = AdsrState.Release; // TODO: Is this correct? it fixes some bad loops. Ill call this the fin release theory 
-                            }
+                            // for (var note of this.activeNoteData) {
+                            //     note.adsrState = AdsrState.Release; // TODO: Is this correct? it fixes some bad loops. Ill call this the fin release theory 
+                            // }
                         }
                         break;
                     }
@@ -3058,6 +3067,7 @@ class Controller {
             console.warn('Invalid index');
             return;
         }
+        let instrumentType = instrument.instrumentTypes[index];
         let archiveIndex = instrument.swarInfoId[index];
         let sampleId = instrument.swavInfoId[index];
 
@@ -3068,11 +3078,13 @@ class Controller {
         }
         let sample = archive[sampleId];
 
-        if (instrument.fRecord === InstrumentType.PsgPulse) {
+        if (instrumentType === InstrumentType.PsgPulse) {
             sample = squares[sampleId];
+            sample.frequency = 1;
+            midiNote = midiNote + 60 - instrument.noteNumber[index]; // For multi-sample instruments
             sample.resampleMode = ResampleMode.NearestNeighbor;
         }
-        else if (instrument.fRecord === InstrumentType.PsgNoise) {
+        else if (instrumentType === InstrumentType.PsgNoise) {
             console.warn('[UNIMPLEMENTED] PSG Noise Note');
         }
         else {
@@ -3124,7 +3136,7 @@ class Controller {
             console.log("MIDI Note " + midiNote);
             console.log("Base MIDI Note: " + instrument.noteNumber[index]);
 
-            if (instrument.fRecord === InstrumentType.PsgPulse) {
+            if (instrumentType === InstrumentType.PsgPulse) {
                 console.log("PSG Pulse");
             }
 
