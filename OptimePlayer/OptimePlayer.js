@@ -1109,6 +1109,9 @@ class SampleInstrument {
         /** @type {Sample} */
         this.sample = sample;
 
+        this.psgNoise = false;
+        this.psgTick = 0;
+
         // sampleFrequency is the sample's tone frequency when played at sampleSampleRate
         this.frequency = 440;
         this.volume = 1;
@@ -1133,16 +1136,27 @@ class SampleInstrument {
 
     advance() {
         g_instrumentsAdvanced++;
-
-        let convertedSampleRate = this.freqRatio * this.sample.sampleRate;
-        this.sampleT += this.invSampleRate * convertedSampleRate;
-
         g_samplesConsidered++;
 
-        // TODO: Reintroduce ResampleMode consideration here - I removed it because I wasn't satisfied with the performance of BlipBuf,
-        //      and because the cubic implementation was creating clicking noises in the Pokemon BW ending music */
-        // TODO: Reintroduce anti-aliased zero-order hold but with high-speed fixed-function averaging instead of BlipBuf
-        this.output = this.getSampleDataAt(Math.floor(this.sampleT)) * this.volume;
+        if (this.psgNoise) {
+            let convertedSampleRate = this.frequency * 8;
+            this.sampleT += this.invSampleRate * convertedSampleRate;
+
+            // TODO: there's probably a better way to do this?
+            while (this.sampleT >= 1) {
+                this.output = this.updateNoiseData() * this.volume;
+                this.sampleT--;
+            }
+        }
+        else {
+            let convertedSampleRate = this.freqRatio * this.sample.sampleRate;
+            this.sampleT += this.invSampleRate * convertedSampleRate;
+
+            // TODO: Reintroduce ResampleMode consideration here - I removed it because I wasn't satisfied with the performance of BlipBuf,
+            //      and because the cubic implementation was creating clicking noises in the Pokemon BW ending music */
+            // TODO: Reintroduce anti-aliased zero-order hold but with high-speed fixed-function averaging instead of BlipBuf
+            this.output = this.getSampleDataAt(Math.floor(this.sampleT)) * this.volume;
+        }
     }
 
     /**
@@ -1160,6 +1174,18 @@ class SampleInstrument {
             return this.sample.data[t];
         } else {
             return 0;
+        }
+    }
+
+    updateNoiseData() {
+        if (this.psgTick & 1) {
+            this.psgTick = (this.psgTick >> 1) ^ 0x6000;
+            return 0.5;
+        }
+        else {
+            // The fire alarm is going off at this very moment! OK im back
+            this.psgTick >>= 1;
+            return -0.5;
         }
     }
 
@@ -1185,6 +1211,14 @@ class SampleInstrument {
         this.frequency = midiNoteToHz(this.midiNote + this.finetuneLfo + this.finetune);
         this.freqRatio = this.frequency / this.sample.frequency;
     }
+
+    enableNoise() {
+        this.psgNoise = true;
+        this.psgTick = 0x7fff;
+    }
+    disableNoise() {
+        this.psgNoise = false;
+    }
 }
 
 class Sequence {
@@ -1198,6 +1232,7 @@ class Sequence {
         this.dataOffset = dataOffset;
         this.messageBuffer = messageBuffer;
         this.controller = controller;
+        this.parentControllerIsFsVis = false;
 
         /** @type {SequenceTrack[]} */
         this.vars = new Int16Array(32);
@@ -1473,8 +1508,9 @@ class SequenceTrack {
                     this.restingUntilAChannelEnds = true;
             }
 
-            //this.sendMessage(false, MessageType.PlayNote, note, velocity, duration, {portamentoKey: this.portamentoKey, mono: this.mono, prg: this.program}); // TODO: i dont like this random object. 
-            this.sequence.controller.playNote(this.id, note, velocity, duration);
+            if (!this.sequence.parentControllerIsFsVis)
+                this.sequence.controller.playNote(this.id, note, velocity, duration);
+            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration);
             this.portamentoKey = note;
         } else {
             switch (opcode) {
@@ -1681,6 +1717,25 @@ class SequenceTrack {
                 {
                     var index = this.readPcInc();
                     this.sequence.writeVar(index, this.sequence.readVar(index) - (this.readLastPcInc(2) << 16 >> 16));
+                    break;
+                }
+                case 0xB3: // Multiply Variable
+                {
+                    var index = this.readPcInc();
+                    this.sequence.writeVar(index, this.sequence.readVar(index) * (this.readLastPcInc(2) << 16 >> 16));
+                    break;
+                }
+                case 0xB4: // Divide Variable
+                {
+                    var index = this.readPcInc();
+                    this.sequence.writeVar(index, 0|(this.sequence.readVar(index) / (this.readLastPcInc(2) << 16 >> 16)));
+                    break;
+                } 
+                case 0xB5: // Shift Variable
+                {
+                    var variable = this.sequence.readVar(this.readPcInc());
+                    var shift = this.readLastPcInc(2) << 16 >> 16;
+                    this.sequence.writeVar(index, shift < 0 ? variable >> -shift : variable << shift);
                     break;
                 }
                 case 0xB6: // Random Variable
@@ -2252,7 +2307,18 @@ class FsVisController {
      * @param {number} id
      * @param {number} runAheadTicks
      */
-    constructor(sdat, id, runAheadTicks) {
+    constructor() {
+        this.runAheadTicks = 0;
+        this.bpmTimer = 0;
+
+        /** @type {CircularBuffer<Message>} */
+        this.messageBuffer = new CircularBuffer(512);
+        this.sequence = null;
+        /** @type {CircularBuffer<Message>} */
+        this.activeNotes = new CircularBuffer(2048);
+    }
+
+    fsVisLoadSseq(sdat, id, runAheadTicks) {
         this.runAheadTicks = runAheadTicks;
 
         let info = sdat.sseqInfos[id];
@@ -2262,11 +2328,36 @@ class FsVisController {
         if (file == null) throw new Error();
         let dataOffset = read32LE(file, 0x18);
 
-        /** @type {CircularBuffer<Message>} */
         this.messageBuffer = new CircularBuffer(512);
-        this.sequence = new Sequence(file, dataOffset, this.messageBuffer);
-        /** @type {CircularBuffer<Message>} */
+        this.sequence = new Sequence(file, dataOffset, this.messageBuffer, this);
+        this.sequence.parentControllerIsFsVis = true;
         this.activeNotes = new CircularBuffer(2048);
+
+        this.bpmTimer = 0;
+
+        for (let i = 0; i < runAheadTicks; i++) {
+            this.tick();
+        }
+    }
+    fsVisLoadSsarSeq(sdat, ssarId, subSseqId, runAheadTicks) {
+        this.runAheadTicks = runAheadTicks;
+
+        let ssarInfo = sdat.ssarInfos[ssarId];
+        if (!ssarInfo) throw `Invalid SSAR ID ${seqId}`;
+        let ssarFile = sdat.fat.get(ssarInfo.fileId);
+        if (!ssarFile) throw `No file found for SSAR ${seqId}`;
+
+        //let ssarListNumEntries = read32LE(ssarFile, 28);
+        let ssarListOffs = 32 + subSseqId * 12;
+        let dataOffset = read32LE(ssarFile, 24);
+
+        this.messageBuffer = new CircularBuffer(1024);
+        this.sequence = new Sequence(ssarFile, dataOffset, this.messageBuffer, this);
+        this.sequence.parentControllerIsFsVis = true;
+        this.activeNotes = new CircularBuffer(2048);
+
+        let trackPCOffset = read32LE(ssarFile, ssarListOffs);
+        this.sequence.tracks[0].pc = trackPCOffset;
 
         this.bpmTimer = 0;
 
@@ -2822,176 +2913,6 @@ class Controller {
 
                 switch (msg.type) {
                     case MessageType.PlayNote:
-                        if (this.activeKeyboardTrackNum !== msg.trackNum || msg.fromKeyboard) {
-                            this.playNote(msg.trackNum, msg.param0, msg.param1, msg.param2, msg.fromKeyboard);
-                            // let track = this.sequence.tracks[msg.trackNum];
-
-                            // let midiNote = msg.param0;
-                            // let rawMidiNote = midiNote;
-                            // let velocity = msg.param1;
-                            // let duration = msg.param2;
-                            // let portamentoKey = msg.param3.portamentoKey;
-                            // let mono = msg.param3.mono;
-                            // let prg = msg.param3.prg; track.program;
-
-                            // if (midiNote < 21 || midiNote > 108) console.log("MIDI note out of piano range: " + midiNote);
-
-                            // // The archive ID inside each instrument record inside each SBNK file
-                            // // refers to the archive ID referred to by the corresponding SBNK entry in the INFO block
-
-                            // /** @type {InstrumentRecord} */
-                            // let instrument = this.instrumentBank.instruments[prg];
-
-                            // // Null note
-                            // if (instrument.fRecord === 0)
-                            //     break;
-
-                            // let index = instrument.resolveEntryIndex(midiNote);
-                            // if (index === -1)
-                            //     break;
-                            // let archiveIndex = instrument.swarInfoId[index];
-                            // let sampleId = instrument.swavInfoId[index];
-
-                            // let archive = this.decodedSampleArchives[archiveIndex];
-                            // if (!archive) throw new Error();
-                            // let sample = archive[sampleId];
-
-                            // if (instrument.fRecord === InstrumentType.PsgPulse) {
-                            //     sample = squares[sampleId];
-                            //     sample.resampleMode = ResampleMode.NearestNeighbor;
-                            // }
-                            // else if (instrument.fRecord === InstrumentType.PsgNoise) {
-                            //     console.warn('[UNIMPLEMENTED] PSG Noise Note');
-                            // }
-                            // else {
-                            //     sample.frequency = midiNoteToHz(instrument.noteNumber[0]); // TODO: Is this property really needed ..?
-                            //     midiNote += instrument.noteNumber[0] - instrument.noteNumber[index]; // For multi-sample instruments
-                            //     sample.resampleMode = ResampleMode.Cubic;
-                            // }
-
-                            // let attackRate, attackCoefficient, decayRate, decayCoefficient, sustainRate, sustainLevel, releaseRate, releaseCoefficient;
-                            // if (track.attackRate !== 0xff) {
-                            //     attackRate = track.attackRate;
-                            //     attackCoefficient = getEffectiveAttack(attackRate);
-                            // }
-                            // else {
-                            //     attackRate = instrument.attack[index];
-                            //     attackCoefficient = instrument.attackCoefficient[index];
-                            // }
-
-                            // if (track.decayRate !== 0xff) {
-                            //     decayRate = track.decayRate;
-                            //     decayCoefficient = CalcDecayCoeff(decayRate);
-                            // }
-                            // else {
-                            //     decayRate = instrument.decay[index];
-                            //     decayCoefficient = instrument.decayCoefficient[index];
-                            // }
-
-                            // if (track.sustainRate !== 0xff) {
-                            //     sustainRate = track.sustainRate;
-                            //     sustainLevel = getSustainLevel(sustainRate);
-                            // }
-                            // else {
-                            //     sustainRate = instrument.sustain[index];
-                            //     sustainLevel = instrument.sustainLevel[index];
-                            // }
-                            
-                            // if (track.releaseRate !== 0xff) {
-                            //     releaseRate = track.releaseRate;
-                            //     releaseCoefficient = CalcDecayCoeff(releaseRate);
-                            // }
-                            // else {
-                            //     releaseRate = instrument.release[index];
-                            //     releaseCoefficient = instrument.releaseCoefficient[index];
-                            // }
-
-                            // if (g_debug) {
-                            //     console.log(this.instrumentBank);
-                            //     console.log("Program " + prg);
-                            //     console.log("MIDI Note " + midiNote);
-                            //     console.log("Base MIDI Note: " + instrument.noteNumber[index]);
-
-                            //     if (instrument.fRecord === InstrumentType.PsgPulse) {
-                            //         console.log("PSG Pulse");
-                            //     }
-
-                            //     console.log("Attack: " + attackRate);
-                            //     console.log("Decay: " + decayRate);
-                            //     console.log("Sustain: " + sustainRate);
-                            //     console.log("Release: " + releaseRate);
-
-                            //     console.log("Attack Coefficient: " + attackCoefficient);
-                            //     console.log("Decay Coefficient: " + decayCoefficient);
-                            //     console.log("Sustain Level: " + sustainLevel);
-                            //     console.log("Release Coefficient: " + releaseCoefficient);
-                            // }
-
-                            // var channel = null;
-                            // if (track.tie && track.lastActiveChannel) {
-                            //     channel = track.lastActiveChannel; //track.activeChannels[track.activeChannels.length - 1];
-                            //     var instr = this.synthesizers[msg.trackNum].instrs[channel.synthInstrIndex];
-                            //     instr.setNote(midiNote);
-
-                            //     channel.midiNote = midiNote;
-                            //     channel.velocity = velocity;
-                            //     channel.endTime = this.sequence.ticksElapsed + duration;
-                            // }
-                            // else {
-                            //     let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0) : 0;
-                            //     let synthInstrIndex = this.synthesizers[msg.trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
-
-                            //     this.notesOn[msg.trackNum][midiNote] = 1;
-                            //     channel = {
-                            //         stopFlag: false,
-                            //         trackNum: msg.trackNum,
-                            //         midiNote: midiNote,
-                            //         velocity: velocity,
-                            //         synthInstrIndex: synthInstrIndex,
-                            //         startTime: this.sequence.ticksElapsed,
-                            //         endTime: this.sequence.ticksElapsed + duration,
-                            //         infiniteDuration: duration === 0 || track.tie,
-                            //         instrument: instrument,
-                            //         instrumentEntryIndex: index,
-                            //         adsrState: AdsrState.Attack,
-                            //         adsrTimer: -92544, // idk why this number, ask gbatek
-                            //         fromKeyboard: msg.fromKeyboard,
-                            //         lfoCounter: 0,
-                            //         lfoDelayCounter: 0,
-                            //         delayCounter: 0
-                            //     };
-                            //     this.activeNoteData.push(channel);
-                            //     track.activeChannels.push(channel);
-                            //     track.lastActiveChannel = channel;
-
-                            //     if (track.restingUntilAChannelEnds && channel.infiniteDuration && mono) {
-                            //         track.channelWaitingFor = channel;
-                            //     }
-                            // }
-
-                            // var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((portamentoKey - rawMidiNote) << 6);
-                            // var sweepLength;
-                            // var autoSweep;
-                            // if (track.portamentoTime) {
-                            //     sweepLength = (track.portamentoTime * track.portamentoTime * Math.abs(sweepPitch)) >> 11;
-                            //     autoSweep = true;
-                            // }
-                            // else {
-                            //     sweepLength = duration;
-                            //     autoSweep = false;
-                            // }
-
-                            // channel.sweepPitch = sweepPitch;
-                            // channel.sweepCounter = sweepLength;
-                            // channel.sweepLength = sweepLength;
-                            // channel.autoSweep = autoSweep;
-                            // this.updateNoteFinetuneLfo(channel);
-
-                            // channel.attackCoefficient = attackCoefficient;
-                            // channel.decayCoefficient = decayCoefficient;
-                            // channel.sustainLevel = sustainLevel;
-                            // channel.releaseCoefficient = releaseCoefficient;
-                        }
                         break;
                     case MessageType.Jump: {
                         this.jumps++;
@@ -3085,7 +3006,9 @@ class Controller {
             sample.resampleMode = ResampleMode.NearestNeighbor;
         }
         else if (instrumentType === InstrumentType.PsgNoise) {
-            console.warn('[UNIMPLEMENTED] PSG Noise Note');
+            //sample.frequency = 1;
+            midiNote = midiNote + 60 - instrument.noteNumber[index]; // For multi-sample instruments
+            //sample.resampleMode = ResampleMode.NearestNeighbor;
         }
         else {
             sample.frequency = midiNoteToHz(0); // TODO: This causes bugs and needs to go..
@@ -3195,6 +3118,8 @@ class Controller {
             if (track.restingUntilAChannelEnds && duration === 0 && track.mono) {
                 track.channelWaitingFor = channel;
             }
+
+            this.synthesizers[trackNum].instrs[channel.synthInstrIndex].psgTick = 0x7fff;
         }
 
         var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((track.portamentoKey - rawMidiNote) << 6);
@@ -3219,6 +3144,8 @@ class Controller {
         channel.decayCoefficient = decayCoefficient;
         channel.sustainLevel = sustainLevel;
         channel.releaseCoefficient = releaseCoefficient;
+
+        this.synthesizers[trackNum].instrs[channel.synthInstrIndex].psgNoise = instrumentType === InstrumentType.PsgNoise;
     }
 }
 
@@ -3257,7 +3184,7 @@ function playController(player, controller, fsVisController) {
                 timer -= 64 * 2728 * SAMPLE_RATE;
 
                 controller.tick();
-                //fsVisController.tick(); TODO: what exactly does this component do ...?
+                fsVisController.tick();
             }
 
             let valL = 0;
@@ -3300,9 +3227,10 @@ async function playSeq(sdat, id) {
     g_currentlyPlayingId = id;
     g_currentlyPlayingIsSsar = false;
 
-    let fsVisController = null; //new FsVisController(sdat, id, 384 * 5);
+    let fsVisController = new FsVisController();
     let controller = new Controller(SAMPLE_RATE);
     controller.loadSseq(sdat, id);
+    fsVisController.fsVisLoadSseq(sdat, id, 384 * 5);
 
     g_currentController = controller;
     currentFsVisController = fsVisController;
@@ -3340,14 +3268,15 @@ async function playSsarSeq(sdat, ssarId, seqId) {
     g_currentlyPlayingSubId = seqId;
     g_currentlyPlayingIsSsar = true;
 
-    let fsVisController = null; //new FsVisController(sdat, id, 384 * 5); // TODO: make this object compatible with loading SSARs
+    let fsVisController = new FsVisController();
     let controller = new Controller(SAMPLE_RATE);
     controller.loadSsarSeq(sdat, ssarId, seqId);
+    fsVisController.fsVisLoadSsarSeq(sdat, ssarId, seqId, 384 * 5);
 
     g_currentController = controller;
     currentFsVisController = fsVisController;
 
-    playController(player, controller, null);
+    playController(player, controller, fsVisController);
 }
 
 /**
@@ -3945,7 +3874,10 @@ function drawFsVis(ctx, time, noteAlpha) {
         } else {
             // Running under a browser
             ctx.font = 'bold 24px monospace';
-            ctx.fillText(`${g_currentlyPlayingSdat.sseqIdNameDict.get(g_currentlyPlayingId)} (ID: ${g_currentlyPlayingId})`, 24, 24);
+            if (g_currentlyPlayingIsSsar)
+                ctx.fillText(`${g_currentlyPlayingSdat.ssarSseqSymbols[g_currentlyPlayingId].ssarSseqIdNameDict.get(g_currentlyPlayingSubId)} (SSAR: ${g_currentlyPlayingId} ID: ${g_currentlyPlayingSubId})`, 24, 24);
+            else
+                ctx.fillText(`${g_currentlyPlayingSdat.sseqIdNameDict.get(g_currentlyPlayingId)} (ID: ${g_currentlyPlayingId})`, 24, 24);
         }
     }
 
