@@ -2255,13 +2255,14 @@ const squares = [
  * @param {number} velocity
  * @param {number} adsrTimer
  */
-function calcChannelVolume(velocity, adsrTimer, lfo=0) {
+function calcChannelVolume(velocity, adsrTimer, decay, lfo=0) {
     const SND_VOL_DB_MIN = -723;
 
     let vol = 0;
 
     vol += SNDi_DecibelSquareTable[velocity];
     vol += adsrTimer >> 7;
+    vol += decay;
 
     if (vol > -0x8000)
         vol += lfo; // src: pret/pokediamond
@@ -2284,6 +2285,18 @@ function calcChannelVolume(velocity, adsrTimer, lfo=0) {
         result /= 1;
 
     return result / 127;
+}
+
+function calcChannelDecay(track) {
+    let decay = 0;
+
+    // src: pret/pokediamond
+    decay = SNDi_DecibelSquareTable[track.volume] + SNDi_DecibelSquareTable[track.expression]; //+ SNDi_DecibelSquareTable[player->volume];
+
+    if (decay < -0x8000)
+        decay = -0x8000;
+
+    return decay;
 }
 
 /**
@@ -2845,7 +2858,8 @@ class Controller {
                     case AdsrState.Attack:
                         entry.adsrTimer = -((-entry.attackCoefficient * entry.adsrTimer) >> 8);
                         // console.log(data.adsrTimer);
-                        instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
+                        //instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
+                        entry.decay = calcChannelDecay(track);
                         // one instrument hits full volume, start decay
                         if (entry.adsrTimer === 0) {
                             entry.adsrState = AdsrState.Decay;
@@ -2860,10 +2874,12 @@ class Controller {
                             entry.adsrState = AdsrState.Sustain;
                         }
 
-                        instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
+                        //instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
+                        entry.decay = calcChannelDecay(track);
                         break;
                     case AdsrState.Sustain:
-                        instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
+                        //instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
+                        entry.decay = calcChannelDecay(track);
                         break;
                     case AdsrState.Release:
                         if (entry.adsrTimer <= -92544) {
@@ -2874,12 +2890,12 @@ class Controller {
                             this.notesOn[entry.trackNum][entry.midiNote] = 0;
                         } else {
                             entry.adsrTimer -= entry.releaseCoefficient;
-                            instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
+                            //instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
                         }
                         break;
                 }
 
-                instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer, Number(this.lfoValue) * (track.lfoType === LfoType.Volume));
+                instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer, entry.decay, Number(this.lfoValue) * (track.lfoType === LfoType.Volume));
 
             } else {
                 // @ts-ignore
@@ -2959,7 +2975,7 @@ class Controller {
                         break;
                     }
                     case MessageType.VolumeChange: {
-                        this.synthesizers[msg.trackNum].volume = ((msg.param0 / 127) * (msg.param1 / 127)) ** 2;
+                        //this.synthesizers[msg.trackNum].volume = ((msg.param0 / 127) * (msg.param1 / 127)) ** 2;
                         break;
                     }
                     case MessageType.PanChange: {
@@ -3108,7 +3124,8 @@ class Controller {
             channel.endTime = this.sequence.ticksElapsed + duration + 1;
         }
         else {
-            let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0) : 0;
+            let decay = calcChannelDecay(track);
+            let initialVolume = attackCoefficient === 0 ? calcChannelVolume(velocity, 0, decay) : 0;
             let synthInstrIndex = this.synthesizers[trackNum].play(sample, midiNote, initialVolume, this.sequence.ticksElapsed);
 
             this.notesOn[trackNum][rawMidiNote] = 1;
@@ -3117,6 +3134,7 @@ class Controller {
                 trackNum: trackNum,
                 midiNote: rawMidiNote,
                 velocity: velocity,
+                decay: decay,
                 synthInstrIndex: synthInstrIndex,
                 startTime: this.sequence.ticksElapsed,
                 endTime: this.sequence.ticksElapsed + duration + 1, // TODO: kind of fucky ik but this is what makes it play correctly
