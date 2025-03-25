@@ -3,6 +3,8 @@ let g_debug = false;
 
 let g_enableStereoSeparation = false;
 let g_enableForceStereoSeparation = false;
+let g_enableCustomRNGSeed = false;
+let g_customRNGSeed = 0;
 let g_usePureTuning = false;
 let g_pureTuningTonic = 0;
 
@@ -919,7 +921,6 @@ class Sdat {
 
                             for (let k = 0; k < instrumentCount; k++) {
                                 instrument.instrumentTypes[k] = read8(bankFile, recordOffset + k * 12 + 8);
-                                console.log(instrument.instrumentTypes[k])
                                 readRecordData(k, 10 + k * 12);
                             }
                             break;
@@ -1212,13 +1213,13 @@ class SampleInstrument {
         this.freqRatio = this.frequency / this.sample.frequency;
     }
 
-    enableNoise() {
-        this.psgNoise = true;
-        this.psgTick = 0x7fff;
-    }
-    disableNoise() {
-        this.psgNoise = false;
-    }
+    // enableNoise() {
+    //     this.psgNoise = true;
+    //     this.psgTick = 0x7fff;
+    // }
+    // disableNoise() {
+    //     this.psgNoise = false;
+    // }
 }
 
 class Sequence {
@@ -1245,11 +1246,18 @@ class Sequence {
             this.tracks[i] = new SequenceTrack(this, i);
         }
 
+        this.randomstate = 0;
+
         this.tracks[0].active = true;
         this.tracks[0].bpm = 120;
 
         this.ticksElapsed = 0;
         this.paused = false;
+    }
+
+    calcRandom() {
+        this.randomstate = 0xffffffff & (this.randomstate * 1664525 + 1013904223); // src: pret/pokediamond
+        return this.randomstate;
     }
 
     tick() {
@@ -1451,7 +1459,14 @@ class SequenceTrack {
         this.paramOverride = ParamOverride.Null;
         var min = this.readPcInc(2) << 16 >> 16;
         var max = this.readPcInc(2) << 16 >> 16;
-        return Math.round(Math.random() * (max - min) + min);
+
+        if (max === min)
+            return min;
+        else {
+            var val = min + Math.abs(this.sequence.calcRandom() % (max - min + 1)) * Math.sign(max - min);
+            return val;
+        }
+        // return Math.round(Math.random() * (max - min) + min);
     }
     readVariable() {
         this.paramOverride = ParamOverride.Null;
@@ -1510,7 +1525,8 @@ class SequenceTrack {
 
             if (!this.sequence.parentControllerIsFsVis)
                 this.sequence.controller.playNote(this.id, note, velocity, duration);
-            this.sendMessage(false, MessageType.PlayNote, note, velocity, duration);
+            else
+                this.sendMessage(false, MessageType.PlayNote, note, velocity, duration);
             this.portamentoKey = note;
         } else {
             switch (opcode) {
@@ -1593,7 +1609,7 @@ class SequenceTrack {
                     if (this.volume > 0x7f)
                         this.volume = 0x7f;
                     this.sendMessage(false, MessageType.VolumeChange, this.volume, this.expression);
-                    this.debugLog("Volume: " + this.volume);
+                    this.debugLogForce("Volume: " + this.volume);
                     break;
                 }
                 case 0xC2: // Master Volume
@@ -1679,7 +1695,7 @@ class SequenceTrack {
                     this.lfoType = this.readLastPcInc() & 0xff;
                     this.debugLog("LFO Type: " + this.lfoType);
                     if (this.lfoType !== LfoType.Pitch) {
-                        console.warn("Unimplemented LFO type: " + this.lfoType);
+                        console.warn(this.id, "Unimplemented LFO type: " + this.lfoType);
                     }
                     break;
                 }
@@ -1742,7 +1758,7 @@ class SequenceTrack {
                 {
                     var index = this.readPcInc();
                     var max = this.readLastPcInc(2) << 16 >> 16;
-                    this.sequence.writeVar(index, Math.round(Math.random() * max));
+                    this.sequence.writeVar(index, this.sequence.calcRandom() % (max + 1));
                     break;
                 }
                 case 0xB8: // Compare Equal
@@ -2239,13 +2255,16 @@ const squares = [
  * @param {number} velocity
  * @param {number} adsrTimer
  */
-function calcChannelVolume(velocity, adsrTimer) {
+function calcChannelVolume(velocity, adsrTimer, lfo=0) {
     const SND_VOL_DB_MIN = -723;
 
     let vol = 0;
 
     vol += SNDi_DecibelSquareTable[velocity];
     vol += adsrTimer >> 7;
+
+    if (vol > -0x8000)
+        vol += lfo; // src: pret/pokediamond
 
     if (vol < SND_VOL_DB_MIN) {
         vol = SND_VOL_DB_MIN;
@@ -2307,8 +2326,8 @@ class FsVisController {
      * @param {number} id
      * @param {number} runAheadTicks
      */
-    constructor() {
-        this.runAheadTicks = 0;
+    constructor(runAheadTicks) {
+        this.runAheadTicks = runAheadTicks;
         this.bpmTimer = 0;
 
         /** @type {CircularBuffer<Message>} */
@@ -2318,9 +2337,7 @@ class FsVisController {
         this.activeNotes = new CircularBuffer(2048);
     }
 
-    fsVisLoadSseq(sdat, id, runAheadTicks) {
-        this.runAheadTicks = runAheadTicks;
-
+    fsVisLoadSseq(sdat, id) {
         let info = sdat.sseqInfos[id];
         if (info == null) throw new Error();
         if (info.fileId == null) throw new Error();
@@ -2334,14 +2351,8 @@ class FsVisController {
         this.activeNotes = new CircularBuffer(2048);
 
         this.bpmTimer = 0;
-
-        for (let i = 0; i < runAheadTicks; i++) {
-            this.tick();
-        }
     }
-    fsVisLoadSsarSeq(sdat, ssarId, subSseqId, runAheadTicks) {
-        this.runAheadTicks = runAheadTicks;
-
+    fsVisLoadSsarSeq(sdat, ssarId, subSseqId) {
         let ssarInfo = sdat.ssarInfos[ssarId];
         if (!ssarInfo) throw `Invalid SSAR ID ${seqId}`;
         let ssarFile = sdat.fat.get(ssarInfo.fileId);
@@ -2360,10 +2371,11 @@ class FsVisController {
         this.sequence.tracks[0].pc = trackPCOffset;
 
         this.bpmTimer = 0;
+    }
 
-        for (let i = 0; i < runAheadTicks; i++) {
+    runAhead() {
+        for (var i = 0; i < this.runAheadTicks; i++)
             this.tick();
-        }
     }
 
     tick() {
@@ -2389,6 +2401,8 @@ class FsVisController {
                 }
             }
         }
+
+        this.sequence.calcRandom();
     }
 }
 
@@ -2864,6 +2878,9 @@ class Controller {
                         }
                         break;
                 }
+
+                instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer, Number(this.lfoValue) * (track.lfoType === LfoType.Volume));
+
             } else {
                 // @ts-ignore
                 indexToDelete = index;
@@ -2913,6 +2930,7 @@ class Controller {
 
                 switch (msg.type) {
                     case MessageType.PlayNote:
+                        this.playNote(msg.trackNum, msg.param0, msg.param1, msg.param2);
                         break;
                     case MessageType.Jump: {
                         this.jumps++;
@@ -2959,6 +2977,7 @@ class Controller {
                 }
             }
         }
+        this.sequence.calcRandom();
     }
 
     playNote(trackNum, midiNote, velocity, duration, fromKeyboard=false) {
@@ -3227,10 +3246,14 @@ async function playSeq(sdat, id) {
     g_currentlyPlayingId = id;
     g_currentlyPlayingIsSsar = false;
 
-    let fsVisController = new FsVisController();
+    let fsVisController = new FsVisController(384 * 5);
     let controller = new Controller(SAMPLE_RATE);
     controller.loadSseq(sdat, id);
-    fsVisController.fsVisLoadSseq(sdat, id, 384 * 5);
+    fsVisController.fsVisLoadSseq(sdat, id);
+
+    controller.sequence.randomstate = g_enableCustomRNGSeed ? g_customRNGSeed : Math.round(Math.random() * 0xffffffff)|0;
+    fsVisController.sequence.randomstate = controller.sequence.randomstate;
+    fsVisController.runAhead();
 
     g_currentController = controller;
     currentFsVisController = fsVisController;
@@ -3268,10 +3291,14 @@ async function playSsarSeq(sdat, ssarId, seqId) {
     g_currentlyPlayingSubId = seqId;
     g_currentlyPlayingIsSsar = true;
 
-    let fsVisController = new FsVisController();
+    let fsVisController = new FsVisController(384 * 5);
     let controller = new Controller(SAMPLE_RATE);
     controller.loadSsarSeq(sdat, ssarId, seqId);
-    fsVisController.fsVisLoadSsarSeq(sdat, ssarId, seqId, 384 * 5);
+    fsVisController.fsVisLoadSsarSeq(sdat, ssarId, seqId);
+
+    controller.sequence.randomstate = g_enableCustomRNGSeed ? g_customRNGSeed : Math.round(Math.random() * 0xffffffff)|0;
+    fsVisController.sequence.randomstate = controller.sequence.randomstate;
+    fsVisController.runAhead();
 
     g_currentController = controller;
     currentFsVisController = fsVisController;
@@ -3862,6 +3889,7 @@ function drawFsVis(ctx, time, noteAlpha) {
         ctx.fillStyle = "#ffffff";
         if (typeof process !== 'undefined') {
             // Running under node
+            // TODO: this probably breaks for SSARs ?
             if (process?.env?.songName) {
                 ctx.font = 'bold 48px Arial';
                 ctx.fillText(`${process.env.songName}`, 24, 24);
@@ -3875,9 +3903,9 @@ function drawFsVis(ctx, time, noteAlpha) {
             // Running under a browser
             ctx.font = 'bold 24px monospace';
             if (g_currentlyPlayingIsSsar)
-                ctx.fillText(`${g_currentlyPlayingSdat.ssarSseqSymbols[g_currentlyPlayingId].ssarSseqIdNameDict.get(g_currentlyPlayingSubId)} (SSAR: ${g_currentlyPlayingId} ID: ${g_currentlyPlayingSubId})`, 24, 24);
+                ctx.fillText(g_currentlyPlayingSdat.ssarSseqSymbols[g_currentlyPlayingId] ? `${g_currentlyPlayingSdat.ssarSseqSymbols[g_currentlyPlayingId].ssarSseqIdNameDict.get(g_currentlyPlayingSubId)} (SSAR: ${g_currentlyPlayingId} ID: ${g_currentlyPlayingSubId})` : `(SSAR: ${g_currentlyPlayingId} ID: ${g_currentlyPlayingSubId})`, 24, 24);
             else
-                ctx.fillText(`${g_currentlyPlayingSdat.sseqIdNameDict.get(g_currentlyPlayingId)} (ID: ${g_currentlyPlayingId})`, 24, 24);
+                ctx.fillText(`${g_currentlyPlayingSdat.sseqIdNameDict.get(g_currentlyPlayingId)} (ID: ${g_currentlyPlayingId})` || `(ID: ${g_currentlyPlayingId})`, 24, 24);
         }
     }
 

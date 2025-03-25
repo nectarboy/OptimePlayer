@@ -608,8 +608,10 @@ window.onload = async () => {
 
         visualizerCanvas.addEventListener('click', event => {
             event.preventDefault();
-            let x = event.pageX - visualizerCanvas.offsetLeft - visualizerCanvas.clientLeft;
-            let y = event.pageY - visualizerCanvas.offsetTop - visualizerCanvas.clientTop;
+            let rect = visualizerCanvas.getBoundingClientRect();
+            let x = event.pageX - rect.left;
+            let y = event.pageY - rect.top - window.scrollY;
+            console.log(x, y);
             for (let i of clickRects) {
                 if (x >= i.x0 && y >= i.y0 && x <= i.x1 && y <= i.y1) {
                     i.callback();
@@ -641,7 +643,7 @@ window.onload = async () => {
                 switch (key) {
                     case "ArrowLeft":
                     case "ArrowRight":
-                        let nextListIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSubId : g_currentlyPlayingId;
+                        let nextListIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSubId : g_currentlyPlayingSdat.sseqList.indexOf(g_currentlyPlayingId);
                         let listMaxIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSdat.getNumOfEntriesInSeqArc(g_currentlyPlayingId) - 1 : g_currentlyPlayingSdat.sseqList.length - 1;
                         if (key === "ArrowLeft") {
                             if (nextListIndex === 0)
@@ -656,7 +658,7 @@ window.onload = async () => {
                         if (g_currentlyPlayingIsSsar)
                             playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, nextListIndex);
                         else
-                            playSeq(g_currentlyPlayingSdat, nextListIndex);
+                            playSeq(g_currentlyPlayingSdat, g_currentlyPlayingSdat.sseqList[nextListIndex]);
                         break;
                     default:
                         break;
@@ -715,7 +717,6 @@ window.onload = async () => {
                     if (note < 0) note = 0;
                     if (note > 127) note = 127;
 
-                    console.log(note);
                     if (down) {
                         g_currentController.sequence.tracks[g_currentController.activeKeyboardTrackNum].sendMessage(true, MessageType.PlayNote, note, 127, 2000);
                         g_currentController.notesOnKeyboard[g_currentController.activeKeyboardTrackNum][note] = 1;
@@ -763,6 +764,7 @@ window.onload = async () => {
         let restartSequenceButton = document.querySelector("#restart-sequence-button");
         restartSequenceButton.onclick = () => {
             pauseButton.innerText = "Pause Sequence Player";
+            paused = false;
             if (g_currentlyPlayingIsSsar)
                 playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, g_currentlyPlayingSubId);
             else
@@ -816,6 +818,15 @@ window.onload = async () => {
     registerCheckbox("#force-stereo-separation", true, checked => {
         g_enableForceStereoSeparation = checked;
     });
+    registerCheckbox("#use-custom-seed", false, checked => {
+        g_enableCustomRNGSeed = checked;
+        document.querySelector("#custom-seed").disabled = !checked;
+    });
+    registerTextbox("#custom-seed", 12345678, value => {
+        if (isNaN(value))
+            return;
+        g_customRNGSeed = parseInt(value);
+    });
 
     registerDropdown("#tuning-system", value => {
         let [usePureTuning, tonic] = value.split(" ");
@@ -841,5 +852,12 @@ function registerCheckbox(selector, checked, callback) {
 
 function registerDropdown(selector, callback) {
     let element = document.querySelector(selector);
+    element.onchange = () => callback(element.value);
+}
+
+function registerTextbox(selector, value, callback) {
+    let element = document.querySelector(selector);
+    element.value = value;
+    callback(value);
     element.onchange = () => callback(element.value);
 }
