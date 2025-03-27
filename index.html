@@ -53,8 +53,25 @@
             grid-area: song-picker;
 
             display: flex;
+            width: 100%;
             flex-direction: column;
+            align-items: flex-start;
+            justify-content: flex-start; 
 
+        }
+        .song-block {
+            position: relative;
+            display: inline;
+            text-align: left; 
+            width: 100%;
+        }
+        .song-button {
+            width: 100%;
+            text-align: left;
+        }
+        .now-playing-icon {
+            position: absolute;
+            pointer-events: none;
         }
 
         #visualizer-canvas {

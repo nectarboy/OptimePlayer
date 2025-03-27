@@ -16,6 +16,8 @@ let g_samplesConsidered = 0;
 let g_currentController = null;
 /** @type {FsVisController | null} */
 let currentFsVisController = null;
+/** @type {bool} */
+let g_playbackPaused = false;
 /** @type {string | null} */
 let g_currentlyPlayingName = null;
 /** @type {Sdat | null} */
@@ -1252,6 +1254,7 @@ class Sequence {
         this.tracks[0].bpm = 120;
 
         this.ticksElapsed = 0;
+        this.ticksElapsedUnpaused = 0;
         this.paused = false;
     }
 
@@ -1270,8 +1273,8 @@ class Sequence {
                     this.tracks[i].restingFor -= !this.tracks[i].restingUntilAChannelEnds;
                 }
             }
+            this.ticksElapsedUnpaused++;
         }
-
         this.ticksElapsed++;
     }
 
@@ -1388,7 +1391,7 @@ class SequenceTrack {
      * @param {string} msg
      */
     debugLogForce(msg) {
-        console.log(`${this.id}: ${msg}`);
+        //console.log(`${this.id}: ${msg}`);
     }
 
     /**
@@ -1597,8 +1600,10 @@ class SequenceTrack {
                 }
                 case 0xC0: // Pan
                 {
-                    this.pan = this.readLastPcInc() & 0xff;
-                    if (this.pan === 127) this.pan = 128;
+                    this.pan = this.readLastPcInc();
+                    if (this.pan < 0) this.pan = 0;
+                    else if (this.pan >= 127) this.pan = 128;
+                    //if (this.pan === 127) this.pan = 128;
                     this.debugLog("Pan: " + this.pan);
                     this.sendMessage(false, MessageType.PanChange, this.pan);
                     break;
@@ -2408,7 +2413,7 @@ class FsVisController {
                             this.activeNotes.pop();
                         }
 
-                        msg.timestamp = this.sequence.ticksElapsed;
+                        msg.timestamp = this.sequence.ticksElapsedUnpaused;
                         this.activeNotes.insert(msg);
                         break;
                 }
@@ -2859,7 +2864,7 @@ class Controller {
                         entry.adsrTimer = -((-entry.attackCoefficient * entry.adsrTimer) >> 8);
                         // console.log(data.adsrTimer);
                         //instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
-                        entry.decay = calcChannelDecay(track);
+                        entry.decay = calcChannelDecay(track);  
                         // one instrument hits full volume, start decay
                         if (entry.adsrTimer === 0) {
                             entry.adsrState = AdsrState.Decay;
@@ -2892,6 +2897,9 @@ class Controller {
                             entry.adsrTimer -= entry.releaseCoefficient;
                             //instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer);
                         }
+
+                        // Decay isn't recalculated for released channels
+                        // TODO: neither is pan, pan range whatever that is, or the lfo value! (pret/pokediamond: TrackUpdateChannel) not so noticable but still
                         break;
                 }
 
@@ -3234,6 +3242,10 @@ function playController(player, controller, fsVisController) {
                 }
             }
 
+            // EXPERIMENTAL: truncate resolution to 10 bits just like real hardware
+            // valL = Math.floor(valL * 1024) / 1024;
+            // valR = Math.floor(valR * 1024) / 1024;
+
             bufferL[i] = valL;
             bufferR[i] = valR;
         }
@@ -3300,7 +3312,7 @@ async function playSsarSeq(sdat, ssarId, seqId) {
     }
 
     const BUFFER_SIZE = 1024;
-    let player = new AudioPlayer(BUFFER_SIZE, null, null);
+    let player = new AudioPlayer(BUFFER_SIZE, null, null); // TODO: a sample rate higher or lower than 32768 causes artifacts [nsmb drill, mkds ssar_0 sseq_311]
     g_currentPlayer = player;
     const SAMPLE_RATE = player.sampleRate;
     console.log("Playing with sample rate: " + SAMPLE_RATE);
@@ -3787,8 +3799,8 @@ function drawFsVis(ctx, time, noteAlpha) {
             let bpm = g_currentController.sequence.tracks[0].bpm;
             let sPerTick = (1 / (bpm / 60)) / 48;
 
-            let ticksAdj = g_currentController.sequence.ticksElapsed;
-            ticksAdj += (time - lastTickTime) / 1000 / sPerTick;
+            let ticksAdj = g_currentController.sequence.ticksElapsedUnpaused;
+            //ticksAdj += (time - lastTickTime) / 1000 / sPerTick;
             let relTime = entry.timestamp - ticksAdj;
 
             let pianoKey = midiNote - 21;

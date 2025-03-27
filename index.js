@@ -1,3 +1,7 @@
+let nowPlayingIcon = document.createElement('img');
+nowPlayingIcon.className = "now-playing-icon";
+nowPlayingIcon.src = 'assets/playing.png';
+
 /**
  * @param {string | URL} url
  */
@@ -40,6 +44,8 @@ function loadHtmlImageElementFromUrl(url) {
  * @param {Uint8Array} data
  */
 async function loadNdsRom(data) {
+    let pauseButton = document.querySelector("#pause-button");
+
     let songPicker = document.querySelector(".song-picker");
     if (songPicker == null) throw new Error();
     while (songPicker.firstChild) {
@@ -62,13 +68,23 @@ async function loadNdsRom(data) {
             songPicker.insertAdjacentHTML("beforeend", '<h3>Sequences:</h3>');
             for (const i of sdat.sseqList) {
                 let name = sdat.sseqIdNameDict.get(i);
+                let songDiv = document.createElement('span');
+                    songDiv.className = "song-block";
                 let button = document.createElement('button');
+                    button.className = "song-button";
                     button.innerText = name ? `${name} (ID: ${i})` : `SSEQ_${i}`;
-                    button.style.textAlign = 'left';
                     button.onclick = () => {
                         playSeq(sdat, i);
+
+                        pauseButton.innerText = "Pause Sequence Player";
+                        g_playbackPaused = false;
+                        nowPlayingIcon.remove();
+                        button.after(nowPlayingIcon);
+                        nowPlayingIcon.width = 16;
+                        nowPlayingIcon.height = 16;
                     };
-                songPicker.appendChild(button);
+                songDiv.appendChild(button);
+                songPicker.appendChild(songDiv);
             }
 
             // Sequence Archives
@@ -79,15 +95,26 @@ async function loadNdsRom(data) {
 
                 for (var ii = 0; ii < ssarSeqCount; ii++) {
                     let sseqName = sdat.ssarSseqSymbols[i] ? sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.get(ii) : null;
+                    let songDiv = document.createElement('span');
+                        songDiv.className = "song-block";
                     let button = document.createElement('button');
+                        button.className = "song-button";
                         button.innerText = sseqName ? `${sseqName} (ID: ${ii})` : `SSEQ_${ii}`;;
                         button.style.textAlign = 'left';
                         let ssarId = i;
                         let seqId = ii;
                         button.onclick = () => {
                             playSsarSeq(sdat, ssarId, seqId);
+
+                            pauseButton.innerText = "Pause Sequence Player";
+                            g_playbackPaused = false;
+                            nowPlayingIcon.remove();
+                            button.after(nowPlayingIcon);
+                            nowPlayingIcon.width = 16;
+                            nowPlayingIcon.height = 16;
                         };
-                    songPicker.appendChild(button);
+                    songDiv.appendChild(button);
+                    songPicker.appendChild(songDiv);
                 }
             }
 
@@ -170,8 +197,8 @@ window.onload = async () => {
     let progressInfo = document.getElementById("progress-info");
     const FADEOUT_LENGTH = 2; // in seconds 
     const LOOP_COUNT = 2;
-    const SAMPLE_RATE = 32768;
-
+    const SAMPLE_RATE = 32768; // 48000, 32768
+    
     function getSseqLengthFromController(controller) {
         let loop = 0;
         let playing = true;
@@ -317,9 +344,10 @@ window.onload = async () => {
                 let valL = 0;
                 let valR = 0;
                 for (let i = 0; i < 16; i++) {
+                    let synth = controller.synthesizers[i];
+                    synth.nextSample();
                     if (g_trackEnables[i]) {
-                        let synth = controller.synthesizers[i];
-                        synth.nextSample();
+                        // synth.nextSample(); // Shouldn't this be outside ??
                         valL += synth.valL;
                         valR += synth.valR;
                     }
@@ -356,6 +384,36 @@ window.onload = async () => {
             downloadUint8Array(name + ".wav", encoder.encode());
         }
     }
+
+    /** @type {HTMLButtonElement} */
+    let pauseButton = document.querySelector("#pause-button");
+    pauseButton.onclick = () => {
+        if (g_currentPlayer === null)
+            return;
+
+        g_playbackPaused = !g_playbackPaused;
+        if (g_currentController) g_currentController.sequence.paused = g_playbackPaused;
+        if (currentFsVisController) currentFsVisController.sequence.paused = g_playbackPaused;
+        if (g_playbackPaused) {
+            pauseButton.innerText = "Unpause Sequence Player";
+        } else {
+            pauseButton.innerText = "Pause Sequence Player";
+        }
+    };
+
+    /** @type {HTMLButtonElement} */
+    let restartSequenceButton = document.querySelector("#restart-sequence-button");
+    restartSequenceButton.onclick = () => {
+        if (g_currentPlayer === null)
+            return;
+
+        pauseButton.innerText = "Pause Sequence Player";
+        g_playbackPaused = false;
+        if (g_currentlyPlayingIsSsar)
+            playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, g_currentlyPlayingSubId);
+        else
+            playSeq(g_currentlyPlayingSdat, g_currentlyPlayingId);
+    };
 
     // Visualizer
     Promise.all(
@@ -645,20 +703,29 @@ window.onload = async () => {
                     case "ArrowRight":
                         let nextListIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSubId : g_currentlyPlayingSdat.sseqList.indexOf(g_currentlyPlayingId);
                         let listMaxIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSdat.getNumOfEntriesInSeqArc(g_currentlyPlayingId) - 1 : g_currentlyPlayingSdat.sseqList.length - 1;
+                        let nextSongDiv
                         if (key === "ArrowLeft") {
                             if (nextListIndex === 0)
                                 break;
                             nextListIndex--;
+                            nextSongDiv = nowPlayingIcon.parentNode.previousSibling;
                         } else if (key === "ArrowRight") {
                             if (nextListIndex === listMaxIndex)
                                 break;
                             nextListIndex++;
+                            nextSongDiv = nowPlayingIcon.parentNode.nextSibling
                         }
 
                         if (g_currentlyPlayingIsSsar)
                             playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, nextListIndex);
                         else
                             playSeq(g_currentlyPlayingSdat, g_currentlyPlayingSdat.sseqList[nextListIndex]);
+
+                        g_playbackPaused = false;
+                        pauseButton.innerHTML = "Pause Sequence Player";
+
+                        nowPlayingIcon.remove();
+                        nextSongDiv.appendChild(nowPlayingIcon);
                         break;
                     default:
                         break;
@@ -745,31 +812,6 @@ window.onload = async () => {
             keyboardPress(event.key, false);
             downKeys[event.key] = false;
         };
-
-        /** @type {HTMLButtonElement} */
-        let pauseButton = document.querySelector("#pause-button");
-        let paused = false;
-        pauseButton.onclick = () => {
-            paused = !paused;
-            if (g_currentController) g_currentController.sequence.paused = paused;
-            if (currentFsVisController) currentFsVisController.sequence.paused = paused;
-            if (paused) {
-                pauseButton.innerText = "Unpause Sequence Player";
-            } else {
-                pauseButton.innerText = "Pause Sequence Player";
-            }
-        };
-
-        /** @type {HTMLButtonElement} */
-        let restartSequenceButton = document.querySelector("#restart-sequence-button");
-        restartSequenceButton.onclick = () => {
-            pauseButton.innerText = "Pause Sequence Player";
-            paused = false;
-            if (g_currentlyPlayingIsSsar)
-                playSsarSeq(g_currentlyPlayingSdat, g_currentlyPlayingId, g_currentlyPlayingSubId);
-            else
-                playSeq(g_currentlyPlayingSdat, g_currentlyPlayingId);
-        };
     });
 
     /** @type {HTMLCanvasElement} */
@@ -798,6 +840,8 @@ window.onload = async () => {
         fsVisCanvas.style.display = "none";
     }
 
+    // let fsVisElapsedT = 0;
+    // let fsVisPreviousGlobalT = 0;
     function fsVisFrame(time) {
         fsVisCanvas.width = window.innerWidth;
         fsVisCanvas.height = window.innerHeight;
