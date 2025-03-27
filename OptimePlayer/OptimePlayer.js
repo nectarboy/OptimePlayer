@@ -3800,7 +3800,8 @@ function drawFsVis(ctx, time, noteAlpha) {
             let sPerTick = (1 / (bpm / 60)) / 48;
 
             let ticksAdj = g_currentController.sequence.ticksElapsedUnpaused;
-            //ticksAdj += (time - lastTickTime) / 1000 / sPerTick;
+            if (!g_playbackPaused)
+                ticksAdj += (time - lastTickTime) / 1000 / sPerTick;
             let relTime = entry.timestamp - ticksAdj;
 
             let pianoKey = midiNote - 21;

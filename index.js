@@ -840,8 +840,6 @@ window.onload = async () => {
         fsVisCanvas.style.display = "none";
     }
 
-    // let fsVisElapsedT = 0;
-    // let fsVisPreviousGlobalT = 0;
     function fsVisFrame(time) {
         fsVisCanvas.width = window.innerWidth;
         fsVisCanvas.height = window.innerHeight;
