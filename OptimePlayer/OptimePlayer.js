@@ -691,14 +691,19 @@ class Sdat {
                     //console.log("SYMB Number of Sub-SSEQ entries for SSAR_" + i + ": " + symbSsarSseqListNumEntries);
 
                     for (let ii = 0; ii < symbSsarSseqListNumEntries; ii++) {
-                        let ssarSseqNameOffs = read32LE(symbView, symbSsarSseqListOffs + 4 + ii*4);
+                        try {
+                            let ssarSseqNameOffs = read32LE(symbView, symbSsarSseqListOffs + 4 + ii*4);
 
-                        // for some reason games have a ton of empty symbols -- skip them
-                        if (ssarSseqNameOffs !== 0) {
-                            let ssarSeqName = readCString(symbView, ssarSseqNameOffs);
+                            // for some reason games have a ton of empty symbols -- skip them
+                            if (ssarSseqNameOffs !== 0) {
+                                let ssarSeqName = readCString(symbView, ssarSseqNameOffs);
 
-                            sdat.ssarSseqSymbols[i].ssarSseqNameIdDict.set(ssarSeqName, ii);
-                            sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.set(ii, ssarSeqName);
+                                sdat.ssarSseqSymbols[i].ssarSseqNameIdDict.set(ssarSeqName, ii);
+                                sdat.ssarSseqSymbols[i].ssarSseqIdNameDict.set(ii, ssarSeqName);
+                            }
+                        }
+                        catch(e) {
+                            break;
                         }
                     }
                 }
@@ -1254,7 +1259,7 @@ class Sequence {
         this.tracks[0].bpm = 120;
 
         this.ticksElapsed = 0;
-        this.ticksElapsedUnpaused = 0;
+        this.ticksElapsedPaused = 0;
         this.paused = false;
     }
 
@@ -1273,7 +1278,9 @@ class Sequence {
                     this.tracks[i].restingFor -= !this.tracks[i].restingUntilAChannelEnds;
                 }
             }
-            this.ticksElapsedUnpaused++;
+        }
+        else {
+            this.ticksElapsedPaused++;
         }
         this.ticksElapsed++;
     }
@@ -1536,6 +1543,8 @@ class SequenceTrack {
                 case 0x80: // Rest
                 {
                     this.restingFor = this.readLastVariableLength();
+                    if (this.restingFor < 0)
+                        this.restingFor = 0;
                     this.debugLog("Resting For: " + this.restingFor);
                     break;
                 }
@@ -2413,7 +2422,7 @@ class FsVisController {
                             this.activeNotes.pop();
                         }
 
-                        msg.timestamp = this.sequence.ticksElapsedUnpaused;
+                        msg.timestamp = this.sequence.ticksElapsed - this.sequence.ticksElapsedPaused;
                         this.activeNotes.insert(msg);
                         break;
                 }
@@ -2902,7 +2911,7 @@ class Controller {
                         // TODO: neither is pan, pan range whatever that is, or the lfo value! (pret/pokediamond: TrackUpdateChannel) not so noticable but still
                         break;
                 }
-
+                
                 instr.volume = calcChannelVolume(entry.velocity, entry.adsrTimer, entry.decay, Number(this.lfoValue) * (track.lfoType === LfoType.Volume));
 
             } else {
@@ -3799,7 +3808,7 @@ function drawFsVis(ctx, time, noteAlpha) {
             let bpm = g_currentController.sequence.tracks[0].bpm;
             let sPerTick = (1 / (bpm / 60)) / 48;
 
-            let ticksAdj = g_currentController.sequence.ticksElapsedUnpaused;
+            let ticksAdj = g_currentController.sequence.ticksElapsed - g_currentController.sequence.ticksElapsedPaused;
             if (!g_playbackPaused)
                 ticksAdj += (time - lastTickTime) / 1000 / sPerTick;
             let relTime = entry.timestamp - ticksAdj;

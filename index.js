@@ -1,7 +1,3 @@
-let nowPlayingIcon = document.createElement('img');
-nowPlayingIcon.className = "now-playing-icon";
-nowPlayingIcon.src = 'assets/playing.png';
-
 /**
  * @param {string | URL} url
  */
@@ -46,11 +42,21 @@ function loadHtmlImageElementFromUrl(url) {
 async function loadNdsRom(data) {
     let pauseButton = document.querySelector("#pause-button");
 
+
+
     let songPicker = document.querySelector(".song-picker");
     if (songPicker == null) throw new Error();
     while (songPicker.firstChild) {
         songPicker.removeChild(songPicker.firstChild);
     }
+
+    let nowPlayingIcon = document.createElement('img');
+    nowPlayingIcon.id = 'now-playing-icon';
+    nowPlayingIcon.className = "now-playing-icon";
+    nowPlayingIcon.src = 'assets/playing.png';
+    nowPlayingIcon.width = 16;
+    nowPlayingIcon.height = 16;
+    nowPlayingIcon.style.display = 'none';
 
     console.log(`ROM size: ${data.length} bytes`);
 
@@ -68,7 +74,7 @@ async function loadNdsRom(data) {
             songPicker.insertAdjacentHTML("beforeend", '<h3>Sequences:</h3>');
             for (const i of sdat.sseqList) {
                 let name = sdat.sseqIdNameDict.get(i);
-                let songDiv = document.createElement('span');
+                let songDiv = document.createElement('div');
                     songDiv.className = "song-block";
                 let button = document.createElement('button');
                     button.className = "song-button";
@@ -78,10 +84,11 @@ async function loadNdsRom(data) {
 
                         pauseButton.innerText = "Pause Sequence Player";
                         g_playbackPaused = false;
+
                         nowPlayingIcon.remove();
                         button.after(nowPlayingIcon);
-                        nowPlayingIcon.width = 16;
-                        nowPlayingIcon.height = 16;
+                        nowPlayingIcon.style.display = 'initial';
+                        console.log(nowPlayingIcon);
                     };
                 songDiv.appendChild(button);
                 songPicker.appendChild(songDiv);
@@ -108,10 +115,10 @@ async function loadNdsRom(data) {
 
                             pauseButton.innerText = "Pause Sequence Player";
                             g_playbackPaused = false;
+                            
                             nowPlayingIcon.remove();
                             button.after(nowPlayingIcon);
-                            nowPlayingIcon.width = 16;
-                            nowPlayingIcon.height = 16;
+                            nowPlayingIcon.style.display = 'initial';
                         };
                     songDiv.appendChild(button);
                     songPicker.appendChild(songDiv);
@@ -701,9 +708,15 @@ window.onload = async () => {
                 switch (key) {
                     case "ArrowLeft":
                     case "ArrowRight":
+                        if (!g_currentlyPlayingSdat)
+                            break;
+
                         let nextListIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSubId : g_currentlyPlayingSdat.sseqList.indexOf(g_currentlyPlayingId);
                         let listMaxIndex = g_currentlyPlayingIsSsar ? g_currentlyPlayingSdat.getNumOfEntriesInSeqArc(g_currentlyPlayingId) - 1 : g_currentlyPlayingSdat.sseqList.length - 1;
-                        let nextSongDiv
+                    
+                        let nowPlayingIcon = document.querySelector('#now-playing-icon');
+                        let nextSongDiv;
+
                         if (key === "ArrowLeft") {
                             if (nextListIndex === 0)
                                 break;
@@ -873,8 +886,8 @@ window.onload = async () => {
     registerDropdown("#tuning-system", value => {
         let [usePureTuning, tonic] = value.split(" ");
 
-        g_usePureTuning = usePureTuning;
-        g_pureTuningTonic = parseInt(tonic);
+        g_usePureTuning = usePureTuning === "pure";
+        g_pureTuningTonic = g_usePureTuning ? parseInt(tonic) : 0;
     })
 };
 
