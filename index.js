@@ -207,31 +207,45 @@ window.onload = async () => {
     const SAMPLE_RATE = 32768; // 48000, 32768
     
     function getSseqLengthFromController(controller) {
+        let time = 0;
         let loop = 0;
         let playing = true;
-
+        let timer = 0;
         let ticks = 0;
 
-        // nintendo DS clock speed
-        while (true) {
-            controller.tick();
-            ticks++;
+        const SAMPLE_RATE = controller.synthesizers[0].sampleRate;
+        while (playing) {
+            // nintendo DS clock speed
+            timer += 33513982;
+            while (timer >= 64 * 2728 * SAMPLE_RATE) {
+                timer -= 64 * 2728 * SAMPLE_RATE;
 
-            if (controller.jumps > 0) {
-                controller.jumps = 0;
-                loop++;
+                controller.tick();
+                ticks++;
 
-                if (loop === LOOP_COUNT) {
+                if (controller.jumps > 0) {
+                    controller.jumps = 0;
+                    loop++;
+
+                    if (loop === LOOP_COUNT) {
+                        playing = false;
+                        break;
+                    }
+                }
+
+                if (controller.fadingStart) {
+                    playing = false;
                     break;
                 }
             }
 
-            if (controller.fadingStart) {
-                break;
-            }
+            // advance instruments (necessary so that mono notes dont hang the controller)
+            for (let i = 0; i < 16; i++) {
+                controller.synthesizers[i].nextSample();
+            }            
         }
 
-        let time = ticks * (64 * 2728) / 33513982;
+        time += ticks * (64 * 2728) / 33513982;
         time += FADEOUT_LENGTH;
 
         return time;
@@ -243,8 +257,10 @@ window.onload = async () => {
      */
     async function renderAndDownloadSeq(sdat, id, subId, isSsar) {
         progressModal.style.display = "block";
-
-        await g_currentPlayer?.ctx.close();
+        
+        if (g_currentController) {
+            await g_currentPlayer?.ctx.close();
+        }
         g_currentController = null;
 
         let controller = new Controller(SAMPLE_RATE);
@@ -253,7 +269,6 @@ window.onload = async () => {
         if (isSsar) {
             controller.loadSsarSeq(sdat, id, subId);
 
-            let name;
             if (sdat.ssarSseqSymbols[id] && sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId))
                 name = sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId);
             else
@@ -266,7 +281,6 @@ window.onload = async () => {
         else {
             controller.loadSseq(sdat, id);
 
-            let name;
             if (sdat.sseqIdNameDict.get(id))
                 name = sdat.sseqIdNameDict.get(id);
             else
@@ -354,7 +368,7 @@ window.onload = async () => {
                     let synth = controller.synthesizers[i];
                     synth.nextSample();
                     if (g_trackEnables[i]) {
-                        // synth.nextSample(); // Shouldn't this be outside ??
+                        // synth.nextSample(); // TODO: Should this be outside ??
                         valL += synth.valL;
                         valR += synth.valR;
                     }

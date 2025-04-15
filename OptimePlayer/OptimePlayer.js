@@ -778,10 +778,15 @@ class Sdat {
 
                 if (infoSsarNameOffs !== 0) {
                     let info = new SsarInfo();
-                    info.fileId = read16LE(infoView, infoSsarNameOffs + 0);
+                    try {
+                        info.fileId = read16LE(infoView, infoSsarNameOffs + 0);
 
-                    sdat.ssarInfos[i] = info;
-                    sdat.ssarList.push(i);
+                        sdat.ssarInfos[i] = info;
+                        sdat.ssarList.push(i);
+                    }
+                    catch (e) {
+                        sdat.ssarInfos[i] = null;
+                    }
                 } else {
                     sdat.ssarInfos[i] = null;
                 }
@@ -1339,6 +1344,7 @@ class SequenceTrack {
         this.exeCommandFlag = true;
         this.paramOverride = ParamOverride.Null;
         this.restingUntilAChannelEnds = false;
+        this.restingForever = false;
         this.channelWaitingFor = null;
 
         this.active = false;
@@ -1398,7 +1404,7 @@ class SequenceTrack {
      * @param {string} msg
      */
     debugLogForce(msg) {
-        //console.log(`${this.id}: ${msg}`);
+        console.log(`${this.id}: ${msg}`);
     }
 
     /**
@@ -1529,8 +1535,9 @@ class SequenceTrack {
             if (this.mono) {
                 this.restingFor = duration;
 
-                if (duration === 0)
+                if (duration === 0) {
                     this.restingUntilAChannelEnds = true;
+                }
             }
 
             if (!this.sequence.parentControllerIsFsVis)
@@ -1772,7 +1779,7 @@ class SequenceTrack {
                 {
                     var index = this.readPcInc();
                     var max = this.readLastPcInc(2) << 16 >> 16;
-                    this.sequence.writeVar(index, this.sequence.calcRandom() % (max + 1));
+                    this.sequence.writeVar(index, this.sequence.calcRandom() % (max + 1)); // TODO: may be wrong
                     break;
                 }
                 case 0xB8: // Compare Equal
@@ -2908,7 +2915,7 @@ class Controller {
                         }
 
                         // Decay isn't recalculated for released channels
-                        // TODO: neither is pan, pan range whatever that is, or the lfo value! (pret/pokediamond: TrackUpdateChannel) not so noticable but still
+                        // TODO: neither is pan, pan range whatever that is, or the lfo value! (pret/pokediamond: TrackUpdateChannel) not so noticable but still (does this differ between versions of the player?)
                         break;
                 }
                 
@@ -3171,6 +3178,24 @@ class Controller {
 
             if (track.restingUntilAChannelEnds && duration === 0 && track.mono) {
                 track.channelWaitingFor = channel;
+
+                // Looping mono duration 0 channels make the track rest forever
+                if (sample.looping) {
+                    track.restingForever = true;
+
+                    // Fade out if all active tracks are resting forever
+                    var shouldFadeOut = true;
+                    for (var i = 0; i < 16; i++) {
+                        if (!this.sequence.tracks[i].active)
+                            continue;
+
+                        if (!this.sequence.tracks[i].restingForever) {
+                            shouldFadeOut = false;
+                            break;
+                        }
+                    }
+                    this.fadingStart ||= shouldFadeOut;
+                }
             }
 
             this.synthesizers[trackNum].instrs[channel.synthInstrIndex].psgTick = 0x7fff;
