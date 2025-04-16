@@ -88,7 +88,7 @@ async function loadNdsRom(data) {
                         nowPlayingIcon.remove();
                         button.after(nowPlayingIcon);
                         nowPlayingIcon.style.display = 'initial';
-                        console.log(nowPlayingIcon);
+                        // console.log(nowPlayingIcon);
                     };
                 songDiv.appendChild(button);
                 songPicker.appendChild(songDiv);
@@ -898,10 +898,18 @@ window.onload = async () => {
     });
 
     registerDropdown("#tuning-system", value => {
-        let [usePureTuning, tonic] = value.split(" ");
+        let [tuning, tonic] = value.split(" ");
 
-        g_usePureTuning = usePureTuning === "pure";
-        g_pureTuningTonic = g_usePureTuning ? parseInt(tonic) : 0;
+        if (tuning === "accurate") {
+            g_useHardwareAccurateTuning = true;
+            g_usePureTuning = false;
+            g_pureTuningTonic = 0;
+        }
+        else {
+            g_useHardwareAccurateTuning = false;
+            g_usePureTuning = (tuning === "pure");
+            g_pureTuningTonic = g_usePureTuning ? parseInt(tonic) : 0;
+        }
     })
 };
 
