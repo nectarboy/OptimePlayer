@@ -672,6 +672,14 @@ class Sdat {
         let sdat = new Sdat();
         sdat.rawView = view;
 
+        const magicSequence = [0xFF, 0xFE, 0x00, 0x01];
+        for (let i = 0; i < magicSequence.length; i++) {
+            if (read8(view, 4 + i) !== magicSequence[i]) {
+                console.log("Invalid SDAT magic, rejecting SDAT.");
+                return null;
+            }
+        }
+
         console.log("Parsing SDAT...");
         console.log("SDAT file size: " + view.byteLength);
 
@@ -1090,7 +1098,7 @@ class Sdat {
                         }
 
                         default:
-                            alert(`Instrument ${j}: Invalid fRecord: ${fRecord} Offset:${recordOffset}`);
+                            console.warn(`Instrument ${j}: Invalid fRecord: ${fRecord} Offset:${recordOffset}`);
                             break;
                     }
 
@@ -1441,7 +1449,7 @@ class Sequence {
         this.randomstate = 0;
 
         this.tracks[0].active = true;
-        this.tracks[0].bpm = 120;
+        this.bpm = 120;
 
         this.ticksElapsed = 0;
         this.ticksElapsedPaused = 0;
@@ -1531,8 +1539,6 @@ class SequenceTrack {
 
         this.active = false;
         this.activeChannels = [];
-
-        this.bpm = 0;
 
         this.pc = 0;
         this.pan = 64;
@@ -2011,7 +2017,8 @@ class SequenceTrack {
                 }
                 case 0xE1: // BPM
                 {
-                    this.bpm = (this.readLastPcInc(2) >>> 0);
+                    // this.bpm = (this.readLastPcInc(2) >>> 0); // bruh
+                    this.sequence.bpm = (this.readLastPcInc(2) >>> 0);
                     this.debugLog("BPM: " + this.bpm);
                     break;
                 }
@@ -2594,7 +2601,7 @@ class FsVisController {
     }
 
     tick() {
-        this.bpmTimer += this.sequence.tracks[0].bpm;
+        this.bpmTimer += this.sequence.bpm;
         while (this.bpmTimer >= 240) {
             this.bpmTimer -= 240;
 
@@ -2727,7 +2734,7 @@ class Controller {
         // valR = Math.floor(valR * 1024) / 1024;
 
         // Master volume
-        const max = 4;
+        const max = 2;
 
         if (valL > max) valL = max;
         else if (valL < -max) valL = -max;
@@ -3187,7 +3194,7 @@ class Controller {
     }
 
     updateSequence() {
-        this.bpmTimer += this.sequence.tracks[0].bpm;
+        this.bpmTimer += this.sequence.bpm;
         while (this.bpmTimer >= 240) {
             this.bpmTimer -= 240;
 
@@ -4298,7 +4305,7 @@ function drawFsVis(ctx, time, noteAlpha) {
             let midiNote = entry.param0;
             let duration = entry.param2;
 
-            let bpm = g_currentController.sequence.tracks[0].bpm;
+            let bpm = g_currentController.sequence.bpm;
             let sPerTick = (1 / (bpm / 60)) / 48;
 
             let ticksAdj = g_currentController.sequence.ticksElapsed - g_currentController.sequence.ticksElapsedPaused;
