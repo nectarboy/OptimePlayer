@@ -68,10 +68,12 @@ async function loadNdsRom(data) {
 
         if (sdat != null) {
             if (sdats.length > 1)
-                songPicker.insertAdjacentHTML("beforeend", '<h2>SDAT ' + i + ':</h2>');
+                songPicker.insertAdjacentHTML("beforeend", '<h2>SDAT ' + (i+1) + ':</h2>');
 
             // Sequences
-            songPicker.insertAdjacentHTML("beforeend", '<h3>Sequences:</h3>');
+            if (sdat.sseqList.length !== 0)
+                songPicker.insertAdjacentHTML("beforeend", '<h3>Sequences:</h3>');
+
             for (const i of sdat.sseqList) {
                 let name = sdat.sseqIdNameDict.get(i);
                 let songDiv = document.createElement('div');
@@ -106,7 +108,7 @@ async function loadNdsRom(data) {
                         songDiv.className = "song-block";
                     let button = document.createElement('button');
                         button.className = "song-button";
-                        button.innerText = sseqName ? `${sseqName} (ID: ${ii})` : `SSEQ_${ii}`;;
+                        button.innerText = sseqName ? `${sseqName} (ID: ${ii})` : `SSEQ_${ii}`;
                         button.style.textAlign = 'left';
                         let ssarId = i;
                         let seqId = ii;
@@ -125,13 +127,31 @@ async function loadNdsRom(data) {
                 }
             }
 
-            console.log("Searching for STRMs");
-            for (const [key, value] of sdat.fat) {
-                if (read32LE(value, 0) === 0x4D525453) {
-                    console.log(`file id:${key} is     STRM`);
+            // Streams
+            if (sdat.strmList.length !== 0)
+                songPicker.insertAdjacentHTML("beforeend", "<h3>Streams:</h3>");
 
-                    // playStrm(sdat.fat[key);
-                }
+            for (const i of sdat.strmList) {
+                let strmName = sdat.strmIdNameDict.get(i);
+
+                let songDiv = document.createElement("span");
+                    songDiv.className = "song-block";
+                let button = document.createElement('button');
+                    button.className = "song-button";
+                    button.innerText = strmName ? `${strmName} (ID: ${i})` : `STRM_${i}`;
+                    button.style.textAlign = 'left';
+                    button.onclick = () => {
+                        playStrm(sdat, i);
+
+                        pauseButton.innerText = "Pause Sequence Player";
+                        g_playbackPaused = false;
+                        
+                        nowPlayingIcon.remove();
+                        button.after(nowPlayingIcon);
+                        nowPlayingIcon.style.display = 'initial';
+                    };
+                songDiv.appendChild(button);
+                songPicker.appendChild(songDiv);
             }
         }
     }
@@ -155,13 +175,13 @@ window.onload = async () => {
     window.addEventListener('dragover', e => {
         if (!(dropZone instanceof HTMLDivElement)) throw new Error();
         e.preventDefault();
-        // console.log("File dragged over");
+        console.log("File dragged over");
         dropZone.style.visibility = 'visible';
     });
     dropZone.addEventListener('dragleave', e => {
         if (!(dropZone instanceof HTMLDivElement)) throw new Error();
         e.preventDefault();
-        // console.log("File drag leave");
+        console.log("File drag leave");
         dropZone.style.visibility = 'hidden';
     });
     window.addEventListener('drop', e => {
@@ -255,19 +275,24 @@ window.onload = async () => {
      * @param {Sdat} sdat
      * @param {string} name
      */
+    // todo: why not optimize this by checking length (or when to fade) while gathering samples... its gotten pretty slow with accurate length calculation
     async function renderAndDownloadSeq(sdat, id, subId, isSsar) {
         progressModal.style.display = "block";
         
-        if (g_currentController) {
+        if (g_currentController || g_currentPlayer) {
             await g_currentPlayer?.ctx.close();
         }
         g_currentController = null;
+        g_currentPlayer = null;
+
+        let rngSeed = g_enableCustomRNGSeed ? g_customRNGSeed : g_lastUsedRNGSeed;
 
         let controller = new Controller(SAMPLE_RATE);
         let name;
         let lengthS;
         if (isSsar) {
             controller.loadSsarSeq(sdat, id, subId);
+            controller.sequence.randomstate = rngSeed;
 
             if (sdat.ssarSseqSymbols[id] && sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId))
                 name = sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId);
@@ -276,10 +301,12 @@ window.onload = async () => {
 
             let tmpController = new Controller(SAMPLE_RATE);
             tmpController.loadSsarSeq(sdat, id, subId);
+            tmpController.sequence.randomstate = rngSeed;
             lengthS = getSseqLengthFromController(tmpController);
         } 
         else {
             controller.loadSseq(sdat, id);
+            controller.sequence.randomstate = rngSeed;
 
             if (sdat.sseqIdNameDict.get(id))
                 name = sdat.sseqIdNameDict.get(id);
@@ -288,6 +315,7 @@ window.onload = async () => {
 
             let tmpController = new Controller(SAMPLE_RATE);
             tmpController.loadSseq(sdat, id);
+            tmpController.sequence.randomstate = rngSeed;
             lengthS = getSseqLengthFromController(tmpController);
         }
 
@@ -368,7 +396,6 @@ window.onload = async () => {
                     let synth = controller.synthesizers[i];
                     synth.nextSample();
                     if (g_trackEnables[i]) {
-                        // synth.nextSample(); // TODO: Should this be outside ??
                         valL += synth.valL;
                         valR += synth.valR;
                     }
@@ -416,6 +443,9 @@ window.onload = async () => {
         if (g_currentController) g_currentController.sequence.paused = g_playbackPaused;
         if (currentFsVisController) currentFsVisController.sequence.paused = g_playbackPaused;
         if (g_playbackPaused) {
+            for (var i = 0; i < 16; i++)
+                for (var channel of g_currentController.sequence.tracks[i].activeChannels)
+                    channel.adsrState = AdsrState.Release;
             pauseButton.innerText = "Unpause Sequence Player";
         } else {
             pauseButton.innerText = "Pause Sequence Player";
@@ -720,6 +750,16 @@ window.onload = async () => {
         function keyboardPress(key, down) {
             if (down) {
                 switch (key) {
+                    case "p":
+                        g_playbackPaused = !g_playbackPaused;
+                        if (g_currentController) g_currentController.sequence.paused = g_playbackPaused;
+                        if (currentFsVisController) currentFsVisController.sequence.paused = g_playbackPaused;
+                        if (g_playbackPaused) {
+                            pauseButton.innerText = "Unpause Sequence Player";
+                        } else {
+                            pauseButton.innerText = "Pause Sequence Player";
+                        }
+                        break;
                     case "ArrowLeft":
                     case "ArrowRight":
                         if (!g_currentlyPlayingSdat)
@@ -886,6 +926,12 @@ window.onload = async () => {
     });
     registerCheckbox("#force-stereo-separation", true, checked => {
         g_enableForceStereoSeparation = checked;
+    });
+    registerCheckbox("#accurate-mixing", false, checked => {
+        g_useAccurateMixing = checked;
+    });
+    registerCheckbox("#carry-over-redundant", false, checked => {
+        g_enableRedundantCarryOverBug = checked;
     });
     registerCheckbox("#use-custom-seed", false, checked => {
         g_enableCustomRNGSeed = checked;

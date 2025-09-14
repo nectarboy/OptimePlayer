@@ -31,7 +31,7 @@
             width: 100%;
             height: 100%;
             z-index: 100;
-            opacity: .8;
+            opacity: 0.8;
 
             font-size: 32px;
 
@@ -182,10 +182,13 @@
             <label for="stereo-separation">Stereo Separation</label><br>
             <input type="checkbox" id="force-stereo-separation">
             <label for="force-stereo-separation">"Force" Stereo Separation (restart song to apply)</label><br>
+            <input type="checkbox" id="accurate-mixing">
+            <label for="accurate-mixing">Accurate Mixing (WIP)</label><br>
+            <input type="checkbox" id="carry-over-redundant">
+            <label for="carry-over-redundant" title="Some sequences expect data from previously played sequences. Enable if a sequence is missing sounds">Carry over data from last sequence</label><br>
             <input type="checkbox" id="use-custom-seed">
-            <label for="use-custom-seed">Use fixed RNG Seed</label><br>
-            <label for="custom-seed">Seed:</label>
-            <input type="text" id="custom-seed"><br><br>
+            <label for="use-custom-seed">Use fixed RNG Seed: </label>
+            <input type="text" id="custom-seed" size=10><br><br>
 
             <label for="tuning-system">Tuning System</label>
 
@@ -203,7 +206,7 @@
                 <option value="pure 9">Pure F#</option>
                 <option value="pure 10">Pure G</option>
                 <option value="pure 11">Pure G#</option>
-                <option value="accurate null">Hardware Accurate</option>
+                <option value="accurate null" title="The DS sound engine's tuning system results in higher notes being slightly pitched up">Hardware Accurate</option>
             </select>
         </div>
     </div>
