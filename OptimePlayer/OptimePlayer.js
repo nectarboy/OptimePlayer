@@ -1090,9 +1090,6 @@ class Sdat {
                                 instrumentCount++;
                             }
 
-                            if (i == 24 && j == 124) {
-                                alert([i, j, fRecord, instrumentCount].toString());
-                            }
                             for (let k = 0; k < instrumentCount; k++) {
                                 instrument.instrumentTypes[k] = read8(bankFile, recordOffset + k * 12 + 8);
                                 readRecordData(k, 10 + k * 12);
