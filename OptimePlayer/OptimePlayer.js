@@ -1082,14 +1082,17 @@ class Sdat {
                                 let end = read8(bankFile, recordOffset + k);
                                 instrument.regionEnd[k] = end;
                                 if (end === 0) {
-                                    instrumentCount = k;
                                     break;
                                 } else if (end === 0x7F) {
-                                    instrumentCount = k + 1;
+                                    instrumentCount++;
                                     break;
                                 }
+                                instrumentCount++;
                             }
 
+                            if (i == 24 && j == 124) {
+                                alert([i, j, fRecord, instrumentCount].toString());
+                            }
                             for (let k = 0; k < instrumentCount; k++) {
                                 instrument.instrumentTypes[k] = read8(bankFile, recordOffset + k * 12 + 8);
                                 readRecordData(k, 10 + k * 12);
@@ -3282,7 +3285,7 @@ class Controller {
 
         // Null note
         if (instrument.fRecord === 0) {
-            console.warn('Null note');
+            console.warn(trackNum + ': Null note');
             return;
         }
 
@@ -3304,7 +3307,7 @@ class Controller {
 
         let archive = this.decodedSampleArchives[archiveIndex];
         if (!archive) {
-            console.warn('No archive');
+            console.warn(trackNum + ': No archive (arcIndex: ' + archiveIndex + ' prg: ' + track.program + ')');
             return; //throw new Error();
         }
 
