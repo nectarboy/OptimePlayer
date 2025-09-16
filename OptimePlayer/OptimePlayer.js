@@ -1161,13 +1161,25 @@ class Sample {
         this.data = data;
         this.frequency = frequency;
         this.sampleRate = sampleRate;
-        this.invSampleRate = 1 / sampleRate;
-        if (sampleTimer <= 0)
+        if (sampleTimer <= 0) {
             this.sampleTimer = Math.floor(33513982 / 2 / sampleRate);
+            this.derivedSampleRate = sampleRate;
+        }
         else {
             this.sampleTimer = sampleTimer;
-            //console.log(sampleTimer, Math.floor(33513982 / 2 / sampleRate));
+            // * Sometimes the given sampleRate will be WILDLY wrong (Tomodachi Collection: Affinity),
+            // sampleTimer is really the only value used by the engine so we derive sampleRate using sampleTimer
+            // * Moreover, even when they are 'right', in most cases the derived frequency and given frequency
+            // differ by around 50hz on average! (derived > given mostly) This does make an audible difference.
+            // * So we keep the derived sample rate regardless for hardware accurate tuning mode.
+            this.derivedSampleRate = 33513982 / 2 / sampleTimer;
+            if (Math.abs(this.derivedSampleRate - sampleRate) > 50) {
+                // console.log(this.derivedSampleRate, sampleRate);
+                this.sampleRate = this.derivedSampleRate;
+            }
         }
+        this.invSampleRate = 1 / this.sampleRate;
+        this.invDerivedSampleRate = 1 / this.derivedSampleRate;
         this.looping = looping;
         this.loopPoint = loopPoint;
 
@@ -1381,9 +1393,7 @@ class SampleInstrument {
     updateFrequency() {
         if (g_useHardwareAccurateTuning && !this.isPsg) {
             var timer = midiNoteToTimer(this.sample.sampleTimer, this.midiNote, this.finetuneLfo + this.finetune);
-            this.frequency = 33513982/(2*timer) * this.sample.invSampleRate;
-            // if (this.isPsg)
-            //     this.frequency *= midiNoteToHz(0);
+            this.frequency = 33513982/(2*timer) * this.sample.invDerivedSampleRate;
             this.freqRatio = this.frequency;
         }
         else {
