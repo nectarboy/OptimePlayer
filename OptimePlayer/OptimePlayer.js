@@ -1173,7 +1173,9 @@ class Sample {
             // differ by around 50hz on average! (derived > given mostly) This does make an audible difference.
             // * So we keep the derived sample rate regardless for hardware accurate tuning mode.
             this.derivedSampleRate = 33513982 / 2 / sampleTimer;
-            if (Math.abs(this.derivedSampleRate - sampleRate) > 50) {
+            const rateRatioTolerance = (44300 / 44100);
+            let rateRatio = this.derivedSampleRate / sampleRate;
+            if (rateRatio > rateRatioTolerance || rateRatio < 1/rateRatioTolerance) {
                 // console.log(this.derivedSampleRate, sampleRate);
                 this.sampleRate = this.derivedSampleRate;
             }
@@ -2204,6 +2206,8 @@ class DelayLine {
     /** @param {number} val */
     process(val) {
         this.buffer[(this.posOut + this.delay) % this.buffer.length] = val;
+        // this.buffer[NaN] = val; // when samplerate was 1, buffer[NaN] was being set, and for some reason, that made all future accesses to an entirely new FloatBuffer (possible all new ones from that point) much slower... wow
+        // why was samplerate even 1 you ask? so that calculating the length of a sequence when rendering and downloading is faster
         let outVal = this.buffer[this.posOut];
         this.posOut++;
         if (this.posOut >= this.buffer.length) {
@@ -2243,8 +2247,8 @@ class SampleSynthesizer {
         /** @private */
         this.pan = 0.5;
 
-        this.delayLineL = new DelayLine(Math.round(this.sampleRate * 0.1));
-        this.delayLineR = new DelayLine(Math.round(this.sampleRate * 0.1));
+        this.delayLineL = new DelayLine(Math.max(Math.round(this.sampleRate * 0.1), 1));
+        this.delayLineR = new DelayLine(Math.max(Math.round(this.sampleRate * 0.1), 1));
 
         this.playingIndex = 0;
 
@@ -2561,6 +2565,7 @@ class FsVisController {
     constructor(runAheadTicks) {
         this.runAheadTicks = runAheadTicks;
         this.bpmTimer = 0;
+        this.jumps = 0;
 
         /** @type {CircularBuffer<Message>} */
         this.messageBuffer = new CircularBuffer(512);
@@ -2629,6 +2634,9 @@ class FsVisController {
 
                         msg.timestamp = this.sequence.ticksElapsed - this.sequence.ticksElapsedPaused;
                         this.activeNotes.insert(msg);
+                        break;
+                    case MessageType.Jump:
+                        this.jumps++;
                         break;
                 }
             }

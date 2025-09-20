@@ -234,11 +234,12 @@ window.onload = async () => {
         let ticks = 0;
 
         const SAMPLE_RATE = controller.synthesizers[0].sampleRate;
+        const TIMER_INC = 64 * 2728 * SAMPLE_RATE;
         while (playing) {
             // nintendo DS clock speed
             timer += 33513982;
-            while (timer >= 64 * 2728 * SAMPLE_RATE) {
-                timer -= 64 * 2728 * SAMPLE_RATE;
+            while (timer >= TIMER_INC) {
+                timer -= TIMER_INC;
 
                 controller.tick();
                 ticks++;
@@ -260,6 +261,7 @@ window.onload = async () => {
             }
 
             // advance instruments (necessary so that mono notes dont hang the controller)
+            // [!]
             for (let i = 0; i < 16; i++) {
                 controller.synthesizers[i].nextSample();
             }            
@@ -297,9 +299,9 @@ window.onload = async () => {
             if (sdat.ssarSseqSymbols[id] && sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId))
                 name = sdat.ssarSseqSymbols[id].ssarSseqIdNameDict.get(subId);
             else
-                name = null;
+                name = `SSAR_${id}_SSEQ_${subId}`;
 
-            let tmpController = new Controller(SAMPLE_RATE);
+            let tmpController = new Controller(1);
             tmpController.loadSsarSeq(sdat, id, subId);
             tmpController.sequence.randomstate = rngSeed;
             lengthS = getSseqLengthFromController(tmpController);
@@ -311,9 +313,9 @@ window.onload = async () => {
             if (sdat.sseqIdNameDict.get(id))
                 name = sdat.sseqIdNameDict.get(id);
             else
-                name = null;
+                name = `SSEQ_${id}`;
 
-            let tmpController = new Controller(SAMPLE_RATE);
+            let tmpController = new Controller(1);
             tmpController.loadSseq(sdat, id);
             tmpController.sequence.randomstate = rngSeed;
             lengthS = getSseqLengthFromController(tmpController);
@@ -338,7 +340,7 @@ window.onload = async () => {
 
         // keep it under 480 seconds
 
-        console.log(lengthS);
+        console.log(lengthS, SAMPLE_RATE);
         const CHUNK_SIZE = Math.floor(SAMPLE_RATE);
 
         let intervalNum;
