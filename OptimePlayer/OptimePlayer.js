@@ -3029,7 +3029,7 @@ class Controller {
     tick() {
         this.updateSequence(); // The order in which this is called actually has a noticable difference for some sounds (like the mini mushroom)
 
-        let indexToDelete = -1;
+        let indexToDelete = -1; // TODO: shouldn't this be an array
 
         for (let index in this.activeNoteData) {
             let entry = this.activeNoteData[index];
@@ -3458,30 +3458,28 @@ class Controller {
             track.activeChannels.push(channel);
             track.lastActiveChannel = channel;
 
-            if (track.restingUntilAChannelEnds && duration === 0 && track.mono) {
-                track.channelWaitingFor = channel;
-
-                // Looping mono duration 0 channels make the track rest forever
-                // TODO: I assume PSG noise loops
-                if (psgNoise || sample.looping) {
-                    track.restingForever = true;
-
-                    // Fade out if all active tracks are resting forever
-                    var shouldFadeOut = true;
-                    for (var i = 0; i < 16; i++) {
-                        if (!this.sequence.tracks[i].active)
-                            continue;
-
-                        if (!this.sequence.tracks[i].restingForever) {
-                            shouldFadeOut = false;
-                            break;
-                        }
-                    }
-                    this.fadingStart ||= shouldFadeOut;
-                }
-            }
-
             this.synthesizers[trackNum].instrs[channel.synthInstrIndex].psgTick = 0x7fff;
+        }
+
+        if (track.restingUntilAChannelEnds && duration === 0 && track.mono) {
+            track.channelWaitingFor = channel;
+
+            if (psgNoise || sample.looping) {
+                track.restingForever = true; // Looping mono duration 0 channels make the track rest forever
+
+                // Fade out if all active tracks are resting forever
+                var shouldFadeOut = true;
+                for (var i = 0; i < 16; i++) {
+                    if (!this.sequence.tracks[i].active)
+                        continue;
+
+                    if (!this.sequence.tracks[i].restingForever) {
+                        shouldFadeOut = false;
+                        break;
+                    }
+                }
+                this.fadingStart ||= shouldFadeOut;
+            }
         }
 
         var sweepPitch = track.sweepPitch + (track.portamentoEnable !== 0) * ((track.portamentoKey - rawMidiNote) << 6);
