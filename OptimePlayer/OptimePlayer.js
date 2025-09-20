@@ -145,7 +145,7 @@ class WavEncoder {
         wave[27] = (this.sampleRate >> 24) & 0xFF;
 
         // ByteRate
-        // SampleRate & NumChannels * BitsPerSample/8
+        // SampleRate * NumChannels * BitsPerSample/8
         const byteRate = this.sampleRate * 2 * (this.bits / 8);
         wave[28] = (byteRate >> 0) & 0xFF;
         wave[29] = (byteRate >> 8) & 0xFF;
@@ -168,12 +168,11 @@ class WavEncoder {
         wave[38] = 0x74;
         wave[39] = 0x61;
 
-        // NumSamples * NumChannels * BitsPerSample/8
-        const subchunk2Size = this.recordBufferAt * 2 * (this.bits / 8);
-        wave[40] = (subchunk2Size >> 0) & 0xFF;
-        wave[41] = (subchunk2Size >> 8) & 0xFF;
-        wave[42] = (subchunk2Size >> 16) & 0xFF;
-        wave[43] = (subchunk2Size >> 24) & 0xFF;
+        // Data Size (NumSamples * NumChannels * BitsPerSample/8)
+        wave[40] = (this.recordBufferAt >> 0) & 0xFF;
+        wave[41] = (this.recordBufferAt >> 8) & 0xFF;
+        wave[42] = (this.recordBufferAt >> 16) & 0xFF;
+        wave[43] = (this.recordBufferAt >> 24) & 0xFF;
 
         for (let i = 0; i < this.recordBufferAt; i++) {
             wave[44 + i] = this.recordBuffer[i];
@@ -1148,6 +1147,12 @@ const MessageType = {
     PitchBend: 6
 };
 
+const SequenceStatus = {
+    Normal: 0,
+    AllTracksFinished: 1,
+    AllTracksRestingForever: 2
+};
+
 class Sample {
     /**
      * @param {Float64Array} data
@@ -1446,6 +1451,8 @@ class Sequence {
         this.messageBuffer = messageBuffer;
         this.controller = controller;
         this.parentControllerIsFsVis = false;
+
+        this.status = SequenceStatus.Normal;
 
         /** @type {SequenceTrack[]} */
         this.vars = new Int16Array(32);
@@ -2503,7 +2510,7 @@ function calcChannelVolume(velocity, adsrTimer, decay, lfo=0) {
     else
         result /= 1;
 
-    return result / 127;
+    return Math.trunc(result) / 127;
 }
 
 function calcChannelPan(pan, lfo=0) {
@@ -2719,6 +2726,7 @@ class Controller {
 
         this.jumps = 0;
         this.fadingStart = false;
+
         /**
          * @type {{ trackNum: number; midiNote: number; velocity: number; synthInstrIndex: number; startTime: number; endTime: number; instrument: InstrumentRecord; instrumentEntryIndex: number; adsrState: number; adsrTimer: number; // idk why this number, ask gbatek
          fromKeyboard: boolean; lfoCounter: number; lfoDelayCounter: number; delayCounter: number; }[]}
@@ -2759,8 +2767,8 @@ class Controller {
         if (valR > max) valR = max;
         else if (valR < -max) valR = -max;   
 
-        valL /= 2;
-        valR /= 2;
+        valL *= 0.5;
+        valR *= 0.5;
 
         let out = {
             valL: valL,
@@ -3211,6 +3219,21 @@ class Controller {
         // this.updateSequence();
     }
 
+    noChannelsPlaying() {
+        for (let i = 0; i < this.activeNoteData.length; i++) {
+            let entry = this.activeNoteData[i];
+            let track = this.sequence.tracks[entry.trackNum];
+            let synth = this.synthesizers[entry.trackNum];
+            let instr = synth.instrs[entry.synthInstrIndex];
+
+            if (instr.volume !== 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     updateSequence() {
         this.bpmTimer += this.sequence.bpm;
         while (this.bpmTimer >= 240) {
@@ -3254,10 +3277,7 @@ class Controller {
                         }
 
                         if (tracksActive === 0) {
-                            this.fadingStart = true;
-                            // for (var note of this.activeNoteData) {
-                            //     note.adsrState = AdsrState.Release; // TODO: Is this correct? it fixes some bad loops. Ill call this the fin release theory 
-                            // }
+                            this.sequence.status = SequenceStatus.AllTracksFinished;
                         }
                         break;
                     }
@@ -3478,7 +3498,10 @@ class Controller {
                         break;
                     }
                 }
-                this.fadingStart ||= shouldFadeOut;
+
+                if (shouldFadeOut) {
+                    this.sequence.status = SequenceStatus.AllTracksRestingForever;
+                }
             }
         }
 

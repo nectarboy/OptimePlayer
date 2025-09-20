@@ -222,12 +222,13 @@ window.onload = async () => {
     let progressModal = document.getElementById("progress-modal");
     let progressBar = document.getElementById("progress-bar");
     let progressInfo = document.getElementById("progress-info");
-    const FADEOUT_LENGTH = 2; // in seconds 
+    const LOOP_FADEOUT_LENGTH = 2; // fadeout when song loops forever
+    const FIN_FADEOUT_LENGTH = 0.1; // 'fadeout' when song finishes 
     const LOOP_COUNT = 2;
     const SAMPLE_RATE = 32768; // 48000, 32768
     
     function getSseqLengthFromController(controller) {
-        let time = 0;
+        let out = {};
         let loop = 0;
         let playing = true;
         let timer = 0;
@@ -244,33 +245,43 @@ window.onload = async () => {
                 controller.tick();
                 ticks++;
 
+                // Fade out when we loop a certain number of times
                 if (controller.jumps > 0) {
                     controller.jumps = 0;
                     loop++;
 
                     if (loop === LOOP_COUNT) {
                         playing = false;
+                        out.fadeoutLength = LOOP_FADEOUT_LENGTH;
                         break;
                     }
                 }
 
-                if (controller.fadingStart) {
+                // Start to fade out when all tracks hit fin and all channels finish playing
+                if (controller.sequence.status === SequenceStatus.AllTracksFinished && controller.noChannelsPlaying()) {
                     playing = false;
+                    out.fadeoutLength = FIN_FADEOUT_LENGTH;
+                    break;
+                }
+                // Or fade out when all tracks are mono and resting forever
+                if (controller.sequence.status === SequenceStatus.AllTracksRestingForever) {
+                    playing = false;
+                    out.fadeoutLength = LOOP_FADEOUT_LENGTH;
                     break;
                 }
             }
 
             // advance instruments (necessary so that mono notes dont hang the controller)
-            // [!]
             for (let i = 0; i < 16; i++) {
                 controller.synthesizers[i].nextSample();
             }            
         }
 
-        time += ticks * (64 * 2728) / 33513982;
-        time += FADEOUT_LENGTH;
+        out.ticksBeforeFadeout = ticks;
+        out.time = ticks * (64 * 2728) / 33513982;
+        out.time += out.fadeoutLength;
 
-        return time;
+        return out;
     }
 
     /**
@@ -291,7 +302,7 @@ window.onload = async () => {
 
         let controller = new Controller(SAMPLE_RATE);
         let name;
-        let lengthS;
+        let seqLength;
         if (isSsar) {
             controller.loadSsarSeq(sdat, id, subId);
             controller.sequence.randomstate = rngSeed;
@@ -301,10 +312,10 @@ window.onload = async () => {
             else
                 name = `SSAR_${id}_SSEQ_${subId}`;
 
-            let tmpController = new Controller(1);
+            let tmpController = new Controller(10);
             tmpController.loadSsarSeq(sdat, id, subId);
             tmpController.sequence.randomstate = rngSeed;
-            lengthS = getSseqLengthFromController(tmpController);
+            seqLength = getSseqLengthFromController(tmpController);
         } 
         else {
             controller.loadSseq(sdat, id);
@@ -315,20 +326,20 @@ window.onload = async () => {
             else
                 name = `SSEQ_${id}`;
 
-            let tmpController = new Controller(1);
+            let tmpController = new Controller(10);
             tmpController.loadSseq(sdat, id);
             tmpController.sequence.randomstate = rngSeed;
-            lengthS = getSseqLengthFromController(tmpController);
+            seqLength = getSseqLengthFromController(tmpController);
         }
 
         console.log('Downloading sequence, name:', name);
 
         let encoder = new WavEncoder(SAMPLE_RATE, 16);
 
+        let ticks = 0;
         let sample = 0;
         let fadingOut = false;
         let fadeoutStartSample = 0;
-        let loop = 0;
 
         let timer = 0;
         let playing = true;
@@ -340,7 +351,7 @@ window.onload = async () => {
 
         // keep it under 480 seconds
 
-        console.log(lengthS, SAMPLE_RATE);
+        console.log(seqLength, SAMPLE_RATE);
         const CHUNK_SIZE = Math.floor(SAMPLE_RATE);
 
         let intervalNum;
@@ -353,27 +364,19 @@ window.onload = async () => {
                 }
                 // nintendo DS clock speed
                 timer += 33513982;
-                while (timer >= 64 * 2728 * SAMPLE_RATE) {
-                    timer -= 64 * 2728 * SAMPLE_RATE;
-
+                const TIMER_INC = 64 * 2728 * SAMPLE_RATE;
+                while (timer >= TIMER_INC) {
+                    timer -= TIMER_INC;
                     controller.tick();
-                }
+                    ticks++;
 
-                if (controller.jumps > 0) {
-                    controller.jumps = 0;
-                    loop++;
-
-                    if (loop === 2) {
-                        controller.fadingStart = true;
+                    if (ticks >= seqLength.ticksBeforeFadeout && !fadingOut) {
+                        fadingOut = true;
+                        fadeoutStartSample = sample + SAMPLE_RATE * seqLength.fadeoutLength;
+                        console.log("Starting fadeout at sample: " + fadeoutStartSample);
                     }
                 }
 
-                if (controller.fadingStart) {
-                    controller.fadingStart = false;
-                    fadingOut = true;
-                    fadeoutStartSample = sample + SAMPLE_RATE * 2;
-                    console.log("Starting fadeout at sample: " + fadeoutStartSample);
-                }
 
                 let fadeoutVolMul = 1;
 
@@ -381,11 +384,9 @@ window.onload = async () => {
                     let fadeoutSample = sample - fadeoutStartSample;
                     if (fadeoutSample >= 0) {
                         let fadeoutTime = fadeoutSample / SAMPLE_RATE;
-
-                        let ratio = (fadeoutTime) / FADEOUT_LENGTH;
+                        let ratio = (fadeoutTime) / seqLength.fadeoutLength;
 
                         fadeoutVolMul = (1 - ratio);
-
                         if (fadeoutVolMul <= 0) {
                             playing = false;
                         }
@@ -410,8 +411,8 @@ window.onload = async () => {
 
             let finishedTime = sample / SAMPLE_RATE;
             // @ts-ignore
-            progressBar.value = Math.round((finishedTime / lengthS) * 100);
-            progressInfo.innerText = `${Math.round(finishedTime)} / ${Math.round(lengthS)} seconds`;
+            progressBar.value = Math.round((finishedTime / seqLength.time) * 100);
+            progressInfo.innerText = `${Math.round(Math.min(finishedTime, seqLength.time))} / ${Math.round(seqLength.time)} seconds`;
         }
 
         intervalNum = setInterval(renderChunk, 0);
