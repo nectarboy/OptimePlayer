@@ -2510,7 +2510,7 @@ function calcChannelVolume(velocity, adsrTimer, decay, lfo=0) {
     else
         result /= 1;
 
-    return Math.trunc(result) / 127;
+    return result / 127;
 }
 
 function calcChannelPan(pan, lfo=0) {
